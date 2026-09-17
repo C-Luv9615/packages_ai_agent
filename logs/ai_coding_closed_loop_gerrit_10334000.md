@@ -89,3 +89,5 @@ URL: https://gerrit.pt.mioffice.cn/c/vela/apps/+/10334000
 
 - `include/agent_config.h`：`AGENT_LLM_TIMEOUT_SEC` 60→120、`AGENT_LLM_SOCKET_TIMEOUT_SEC`
   120→180 —— 使多轮工具调用后的"最终总结" LLM 请求不再被看门狗判超时，气泡完整播报。
+
+<!-- CI re-trigger: aurix runner lost communication (infra flake), 4/5 boards green; re-running. -->
