@@ -100,6 +100,11 @@ if(CONFIG_EXAMPLES_AI_AGENT_VELA)
 
   if(CONFIG_AI_AGENT_LVGL_UI)
     list(APPEND AGENT_SRCS src/ui/lvgl_ui_channel.c)
+    list(APPEND AGENT_SRCS src/ui/lvgl_toast.c)
+  endif()
+
+  if(CONFIG_AI_AGENT_NOTIFY_SERVICE)
+    list(APPEND AGENT_SRCS src/infra/notify_service.c)
   endif()
 
   if(CONFIG_AI_AGENT_CAMERA)

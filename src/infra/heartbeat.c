@@ -125,6 +125,8 @@ static bool heartbeat_send(void)
 static void *heartbeat_thread(void *arg)
 {
     (void)arg;
+    printf("DBG: heartbeat thread RUN\n");
+    fflush(stdout);
 
     while (s_heartbeat_running) {
         /* Sleep for the heartbeat interval (use sleep() to avoid usleep overflow) */

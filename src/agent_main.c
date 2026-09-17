@@ -77,6 +77,12 @@
 #ifdef CONFIG_AI_AGENT_LVGL_UI
 #include "ui/lvgl_ui_channel.h"
 #endif
+#ifdef CONFIG_AI_AGENT_NOTIFY_SERVICE
+#include "infra/notify_service.h"
+#endif
+#ifdef CONFIG_AI_AGENT_MCP
+#include "tools/mcp_client.h"
+#endif
 #ifdef CONFIG_AI_AGENT_BLE_GATT
 #include "infra/ble_cmd_handler.h"
 #include "infra/ble_gatt.h"
@@ -148,9 +154,15 @@ static void net_state_change_cb(net_state_t state, void* arg)
 static void* network_watch_task(void* arg)
 {
     (void)arg;
+    printf("DBG: net_watch thread RUN\n");
+    fflush(stdout);
     syslog(LOG_INFO, "[%s] Network watcher started\n", TAG);
 
+    printf("DBG: net_watch before wifi_reconnect\n");
+    fflush(stdout);
     network_wifi_reconnect();
+    printf("DBG: net_watch after wifi_reconnect\n");
+    fflush(stdout);
 
     if (network_wait_connected(30000) == OK) {
         syslog(LOG_INFO, "[%s] Network connected: %s\n", TAG, network_get_ip());
@@ -181,6 +193,18 @@ static void* network_watch_task(void* arg)
 #ifdef CONFIG_AI_AGENT_WEIXIN
         if (weixin_channel_start() != OK)
             syslog(LOG_WARNING, "[%s] weixin_channel_start failed\n", TAG);
+#endif
+
+        /* MCP servers were restored from config_store during mcp_client_init
+         * (before the link was up), so the initial discover likely failed.
+         * Retry now that the network is up so tools are registered before
+         * the notify poller first runs. */
+#ifdef CONFIG_AI_AGENT_MCP
+        mcp_client_discover();
+#endif
+#ifdef CONFIG_AI_AGENT_NOTIFY_SERVICE
+        if (notify_service_start() != OK)
+            syslog(LOG_WARNING, "[%s] notify_service_start failed\n", TAG);
 #endif
 
         syslog(LOG_INFO, "[%s] All network services started!\n", TAG);
@@ -225,19 +249,29 @@ static void* network_watch_task(void* arg)
 static void *quickapp_mq_listener_task(void *arg)
 {
     (void)arg;
+    printf("DBG: qapp_mq thread RUN\n");
+    fflush(stdout);
     syslog(LOG_INFO, "[%s] Quickapp mqueue listener started\n", TAG);
 
     struct mq_attr attr = {
         .mq_maxmsg  = VELACLAW_MQ_MAX_MSGS,
         .mq_msgsize = VELACLAW_MQ_MSG_SIZE,
     };
+    printf("DBG: qapp_mq before mq_open\n");
+    fflush(stdout);
     mqd_t mq = mq_open(VELACLAW_MQ_QAPP_IN, O_RDONLY | O_CREAT, 0666, &attr);
+    printf("DBG: qapp_mq after mq_open mq=%d\n", (int)mq);
+    fflush(stdout);
     if (mq == (mqd_t)-1) {
         syslog(LOG_ERR, "[%s] Failed to open quickapp inbound mqueue: %d\n", TAG, errno);
         return NULL;
     }
 
+    printf("DBG: qapp_mq before malloc\n");
+    fflush(stdout);
     char *buf = (char *)malloc(VELACLAW_MQ_MSG_SIZE);
+    printf("DBG: qapp_mq after malloc buf=%p\n", (void*)buf);
+    fflush(stdout);
     if (!buf) {
         syslog(LOG_ERR, "[%s] Failed to allocate mqueue recv buffer\n", TAG);
         mq_close(mq);
@@ -334,6 +368,8 @@ static time_t s_voice_cooldown_until;
 static void* outbound_dispatch_task(void* arg)
 {
     (void)arg;
+    printf("DBG: outbound thread RUN\n");
+    fflush(stdout);
     syslog(LOG_INFO, "[%s] Outbound dispatch started\n", TAG);
 
     while (!g_shutdown_requested) {
@@ -405,6 +441,17 @@ static void* outbound_dispatch_task(void* arg)
                 syslog(LOG_ERR, "[%s] lvgl_ui_channel_send failed: %d\n", TAG, uret);
             }
 #endif
+#ifdef CONFIG_AI_AGENT_NOTIFY_SERVICE
+        } else if (strcmp(msg.channel, AGENT_CHAN_LVGL_NOTIFY) == 0) {
+            /* Transient toast notice. The toast itself is already popped
+             * by the notify service (which knows the exact title + color);
+             * this branch only mirrors to the CLI for debug visibility and
+             * does NOT enter the chat history. */
+            pthread_mutex_lock(&g_stdout_lock);
+            printf("\n[Notify]: %s\nvela> ", msg.content);
+            fflush(stdout);
+            pthread_mutex_unlock(&g_stdout_lock);
+#endif
 #ifdef CONFIG_AI_AGENT_WEIXIN
         } else if (strcmp(msg.channel, AGENT_CHAN_WEIXIN) == 0) {
             /* chat_id format: "from_user_id|context_token" */
@@ -435,6 +482,14 @@ static void* outbound_dispatch_task(void* arg)
             fflush(stdout);
             pthread_mutex_unlock(&g_stdout_lock);
             syslog(LOG_INFO, "[agent] [Agent]: %s\n", msg.content);
+#ifdef CONFIG_AI_AGENT_LVGL_UI
+            /* Mirror CLI replies to the LVGL UI so that `ask` responses
+             * (which come in on the "cli" channel) also render as chat
+             * cards on screen, not only as terminal text.  send() shows
+             * the chat screen on first call, so the UI comes up
+             * automatically when the first reply arrives. */
+            lvgl_ui_channel_send(msg.content);
+#endif
         } else {
             syslog(LOG_WARNING, "[%s] Unknown channel: %s\n", TAG, msg.channel);
         }
@@ -471,11 +526,16 @@ int ai_agent_main(int argc, char* argv[])
 
     g_shutdown_requested = false;
 
+    printf("DBG: ai_agent_main ENTER\n");
+    fflush(stdout);
+
     struct timespec t0;
     clock_gettime(CLOCK_MONOTONIC, &t0);
 
     syslog(LOG_INFO, "[%s] AI Agent - Vela AI Agent starting (build: %s)\n",
         TAG, AGENT_BUILD_VERSION);
+    printf("DBG: after first syslog\n");
+    fflush(stdout);
 
     /* ── Phase 0: Timezone ──────────────────────────────────── */
     /* Set TZ before any time calls so localtime_r returns CST+8.
@@ -502,13 +562,13 @@ int ai_agent_main(int argc, char* argv[])
     mkdir("/data/agent/sessions", 0755);
     mkdir("/data/agent/skills", 0755);
     BOOT_LOG(&t0, "P0", "storage ready");
+    printf("DBG: phase P0 storage ready\n");
+    fflush(stdout);
 
-    /* Memory info */
-    {
-        struct mallinfo mi = mallinfo();
-        syslog(LOG_INFO, "[%s] [boot +%ldms] heap: arena=%d free=%d used=%d\n",
-            TAG, boot_ms(&t0), mi.arena, mi.fordblks, mi.uordblks);
-    }
+    /* Memory info — mallinfo() walks the heap and can DEBUGASSERT-reboot
+     * on this target (see agent_mem.h), so skip the walker at boot. */
+    syslog(LOG_INFO, "[%s] [boot +%ldms] heap: mallinfo disabled\n",
+        TAG, boot_ms(&t0));
 
     /* ── Phase 1: Core infrastructure ──────────────────────── */
     {
@@ -527,12 +587,16 @@ int ai_agent_main(int argc, char* argv[])
         rc = session_mgr_init();
         BOOT_LOG_RC(&t0, "P1", "session_mgr_init", rc);
     }
+    printf("DBG: phase P1 core init done\n");
+    fflush(stdout);
 
     /* ── Phase 2: Proxy / networking ───────────────────────── */
     {
         int rc = http_proxy_init();
         BOOT_LOG_RC(&t0, "P2", "http_proxy_init", rc);
     }
+    printf("DBG: phase P2 http_proxy done\n");
+    fflush(stdout);
 
     /* ── Phase 3: Application services ─────────────────────── */
     {
@@ -597,13 +661,25 @@ int ai_agent_main(int argc, char* argv[])
         rc = lvgl_ui_channel_init();
         BOOT_LOG_RC(&t0, "P3", "lvgl_ui_channel_init", rc);
 #endif
+
+#ifdef CONFIG_AI_AGENT_NOTIFY_SERVICE
+        /* Loads per-source config + cursors only (no network, no thread).
+         * The polling thread is started later in network_watch_task once
+         * the link is up, since each poll issues a sync MCP HTTP call. */
+        rc = notify_service_init();
+        BOOT_LOG_RC(&t0, "P3", "notify_service_init", rc);
+#endif
     }
+    printf("DBG: phase P3 services done\n");
+    fflush(stdout);
 
     /* ── Phase 4: CLI — register commands only, no thread yet ── */
     {
         int rc = nsh_commands_init();
         BOOT_LOG_RC(&t0, "P4", "nsh_commands_init", rc);
     }
+    printf("DBG: phase P4 cli init done\n");
+    fflush(stdout);
 
     /* ── Phase 5: Network — async, does NOT block ready ────── */
 
@@ -621,6 +697,8 @@ int ai_agent_main(int argc, char* argv[])
         return -1;
     }
     BOOT_LOG(&t0, "P5", "outbound dispatch thread started");
+    printf("DBG: phase P5 outbound started\n");
+    fflush(stdout);
 
 #ifdef CONFIG_FEATURE_SYSTEM_VELACLAW
     /* Quickapp mqueue listener - receives requests from quickapp process */
@@ -690,21 +768,29 @@ int ai_agent_main(int argc, char* argv[])
         syslog(LOG_WARNING, "[%s] Failed to start network_watch thread\n", TAG);
     }
     BOOT_LOG(&t0, "P5", "network_watch thread started (async)");
+    printf("DBG: phase P5 network_watch started\n");
+    fflush(stdout);
 
     /* ── Phase 6: CLI thread — all services now in known state ── */
     {
         int rc = nsh_commands_start();
         BOOT_LOG_RC(&t0, "P6", "nsh_commands_start", rc);
     }
+    printf("DBG: phase P6 cli thread started\n");
+    fflush(stdout);
 
     syslog(LOG_INFO, "[%s] [boot +%ldms] AI Agent ready. Type 'help' in NSH for commands.\n",
         TAG, boot_ms(&t0));
 
     /* Block main thread until shutdown is requested */
+    printf("DBG: main loop enter shutdown=%d\n", (int)g_shutdown_requested);
+    fflush(stdout);
     while (!g_shutdown_requested) {
         sleep(1);
     }
 
+    printf("DBG: main loop EXIT shutdown=%d\n", (int)g_shutdown_requested);
+    fflush(stdout);
     syslog(LOG_INFO, "[%s] Shutdown requested — stopping services...\n", TAG);
 
     /* Wake all threads blocked on message bus before stopping services */
@@ -735,6 +821,11 @@ int ai_agent_main(int argc, char* argv[])
     /* Phase 5 services (non-network) */
     cron_service_stop();
     heartbeat_stop();
+#ifdef CONFIG_AI_AGENT_NOTIFY_SERVICE
+    /* Stop the poller before MCP is torn down — the poll thread issues
+     * sync MCP HTTP calls and must not outlive the client module. */
+    notify_service_stop();
+#endif
 
     /* Give threads a moment to notice and exit */
     usleep(500 * 1000);
