@@ -45,24 +45,20 @@ typedef struct {
 } agent_mem_status_t;
 
 /**
- * Query current heap memory status.
+ * Query current heap memory status via mallinfo().
  *
- * NOTE: we intentionally do NOT call mallinfo() here.  mallinfo() walks the
- * full heap via mm_foreach(), and on this target the heap can be in a
- * corrupted state (a free-chunk blink/flink pair gets clobbered — suspected
- * to be related to the tiny_ttf 2.5 MB MiSans buffer interaction).  When
- * mallinfo() hits the bad node it DEBUGASSERTs, and the assert path itself
- * recurses ("Reset board on recursive assert"), rebooting the board.
- * agent_mem_safe_size() is only used to *cap* an allocation that is already
- * bounded by a small min/max pair, so returning a large conservative free
- * value here makes safe_size() return the requested size (its normal behavior
- * when memory is plentiful) without ever touching the heap walker.
+ * The static MiSans font (lv_font_conv pre-rasterized, compiled into
+ * .rodata) replaced the runtime tiny_ttf rasterizer, removing the heap
+ * corruption source that used to trip mallinfo()'s heap walker.  If
+ * mallinfo() ever DEBUGASSERTs again, that is a live heap-corruption
+ * canary: do not paper over it here — find the writer.
  */
 static inline void agent_mem_get_status(agent_mem_status_t* st)
 {
-    st->total_heap = 128 * 1024 * 1024;   /* 128 MB RAM, conservative */
-    st->free_heap = 96 * 1024 * 1024;     /* pretend 96 MB free */
-    st->largest_block = 96 * 1024 * 1024;
+    struct mallinfo mi = mallinfo();
+    st->total_heap = mi.arena;
+    st->free_heap = mi.fordblks;
+    st->largest_block = mi.fordblks; /* conservative estimate */
 }
 
 /**

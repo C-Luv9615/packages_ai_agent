@@ -361,24 +361,15 @@ static int open_nuttx_capture(audio_capture_t* cap, const char* dev_path,
     if (fd < 0) {
         syslog(LOG_ERR, "[%s] open(%s) failed, errno=%d\n",
             TAG, dev_path, errno);
-        printf("VDBG: open_nuttx_capture open(%s) FAILED errno=%d\n",
-            dev_path, errno);
-        fflush(stdout);
         return -errno;
     }
-    printf("VDBG: open_nuttx_capture open(%s) OK fd=%d\n", dev_path, fd);
-    fflush(stdout);
 
     ret = ioctl(fd, AUDIOIOC_RESERVE, 0);
     if (ret < 0) {
         syslog(LOG_ERR, "[%s] AUDIOIOC_RESERVE failed: %d\n", TAG, ret);
-        printf("VDBG: AUDIOIOC_RESERVE FAILED ret=%d errno=%d\n", ret, errno);
-        fflush(stdout);
         close(fd);
         return ret;
     }
-    printf("VDBG: AUDIOIOC_RESERVE OK\n");
-    fflush(stdout);
 
     memset(&desc, 0, sizeof(desc));
     desc.caps.ac_len            = sizeof(desc.caps);
@@ -392,15 +383,9 @@ static int open_nuttx_capture(audio_capture_t* cap, const char* dev_path,
     ret = ioctl(fd, AUDIOIOC_CONFIGURE, &desc);
     if (ret < 0) {
         syslog(LOG_ERR, "[%s] AUDIOIOC_CONFIGURE failed: %d\n", TAG, ret);
-        printf("VDBG: AUDIOIOC_CONFIGURE FAILED ret=%d errno=%d (rate=%u ch=%u bps=%u)\n",
-            ret, errno, sample_rate, channels, bits_per_sample);
-        fflush(stdout);
         close(fd);
         return ret;
     }
-    printf("VDBG: AUDIOIOC_CONFIGURE OK (rate=%u ch=%u bps=%u)\n",
-        sample_rate, channels, bits_per_sample);
-    fflush(stdout);
 
     cap->backend = AUDIO_CAPTURE_BACKEND_NUTTX;
     cap->handle.fd = fd;
@@ -428,12 +413,8 @@ static int open_media_recorder_capture(audio_capture_t* cap,
     if (!cap->handle.recorder) {
         syslog(LOG_ERR, "[%s] media_recorder_open failed, errno=%d\n",
             TAG, errno);
-        printf("VDBG: media_recorder_open FAILED errno=%d\n", errno);
-        fflush(stdout);
         return -errno;
     }
-    printf("VDBG: media_recorder_open OK (NUTTX backend did NOT open)\n");
-    fflush(stdout);
 
     snprintf(opts, sizeof(opts),
         "format=s%ule:sample_rate=%u:ch_layout=%s",
@@ -517,15 +498,11 @@ audio_capture_t* audio_capture_open(const char* dev_path,
 #endif
 
     if (ret < 0) {
-        printf("VDBG: audio_capture_open ALL backends FAILED (ret=%d)\n", ret);
-        fflush(stdout);
         free(cap);
         return NULL;
     }
 
     s_active_capture = cap;
-    printf("VDBG: audio_capture_open OK backend=%d\n", (int)cap->backend);
-    fflush(stdout);
     return cap;
 }
 
@@ -549,15 +526,11 @@ int audio_capture_start(audio_capture_t* cap)
         if (ioctl(cap->handle.fd, AUDIOIOC_START, 0) < 0) {
             syslog(LOG_ERR, "[%s] AUDIOIOC_START failed: %d\n",
                 TAG, errno);
-            printf("VDBG: AUDIOIOC_START FAILED errno=%d\n", errno);
-            fflush(stdout);
             return -errno;
         }
 
         cap->started = 1;
         syslog(LOG_INFO, "[%s] NuttX audio capture started\n", TAG);
-        printf("VDBG: AUDIOIOC_START OK, NuttX capture running\n");
-        fflush(stdout);
         return 0;
 #else
         return -ENOTSUP;

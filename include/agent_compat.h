@@ -92,14 +92,9 @@ static inline int agent_task_create(void* (*func)(void*), const char* name,
     int r = pthread_create(&tid, &attr, _agent_task_shim, ta);
     pthread_attr_destroy(&attr);
     if (r != 0) {
-        printf("DBG: agent_task_create(%s) pthread_create FAILED r=%d prio=%d stack=%d\n",
-               name, r, prio, stack_size);
-        fflush(stdout);
         free(ta);
         return ERROR;
     }
-    printf("DBG: agent_task_create(%s) OK prio=%d stack=%d\n", name, prio, stack_size);
-    fflush(stdout);
     pthread_detach(tid);
     return OK;
 }

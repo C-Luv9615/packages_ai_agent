@@ -32,6 +32,11 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <lvgl/lvgl.h>
+
+/* App-owned pre-rasterized MiSans-16 CJK font (compiled from
+ * src/ui/lv_font_misans_16_cjk.c, same pattern as xiaozhi_gui's
+ * font_awesome_*.c) — declared here instead of patching apps_graphics_lvgl. */
+LV_FONT_DECLARE(lv_font_misans_16_cjk);
 #include <pthread.h>
 #include <semaphore.h>
 #include <stdbool.h>
@@ -39,7 +44,6 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <syslog.h>
-#include <uikit/uikit_font_manager.h>
 #include <unistd.h>
 
 /* ── Constants ────────────────────────────────────────────────── */
@@ -124,9 +128,6 @@ typedef struct {
     lv_obj_t* rec_indicator;
     lv_obj_t* close_btn;
     lv_anim_t rec_anim;
-
-    /* Font (created via uikit font manager, supports CJK) */
-    lv_font_t* font;
 
     /* Chat history */
     chat_history_t history;
@@ -365,24 +366,12 @@ int lvgl_ui_channel_init(void)
      * demand when the user activates the chat UI, to avoid
      * hijacking the system's current screen at boot. */
 
-    /* Defer CJK font creation to the LVGL thread (show_screen_async_cb).
-     * Creating a FreeType font here — from the main thread — causes
-     * FT_Err_Invalid_Size_Handle (0x55) because the FreeType size
-     * object races with the LVGL render thread.  Use Montserrat as
-     * a safe placeholder until the screen is shown. */
-    s_state.font = NULL;
-    /* Default text font: prefer the statically-compiled MiSans-16 CJK font
+    /* Default text font: the app-owned statically-compiled MiSans-16 CJK font
      * (3755 GB2312-1 common chars + ASCII + fullwidth punctuation, baked into
      * the binary via lv_font_conv — zero runtime malloc/rasterization) so
      * Agent reply Chinese text renders on qemu with full coverage and cannot
      * corrupt the heap.  Falls back to SimSun-16 (1000 chars) then Montserrat. */
-#if LV_FONT_MISANS_16_CJK
     lv_obj_set_style_text_font(s_state.screen, &lv_font_misans_16_cjk, 0);
-#elif LV_FONT_SIMSUN_16_CJK
-    lv_obj_set_style_text_font(s_state.screen, &lv_font_simsun_16_cjk, 0);
-#else
-    lv_obj_set_style_text_font(s_state.screen, &lv_font_montserrat_14, 0);
-#endif
 
     /* Step 5: Create Chat View container */
     chat_h = disp_h - LVGL_UI_PADDING_TOP - LVGL_UI_PADDING_BOTTOM
@@ -493,12 +482,6 @@ int lvgl_ui_channel_init(void)
 
 cleanup:
     /* Release resources in reverse order (coding-2) */
-#if LV_USE_FREETYPE
-    if (s_state.font) {
-        vg_font_destroy(s_state.font);
-        s_state.font = NULL;
-    }
-#endif
 
     if (s_state.screen) {
         lv_obj_del(s_state.screen);
@@ -562,13 +545,6 @@ static void lvgl_ui_do_cleanup(void)
 
     s_state.screen_visible = false;
     s_state.prev_screen = NULL;
-
-#if LV_USE_FREETYPE
-    if (s_state.font) {
-        vg_font_destroy(s_state.font);
-        s_state.font = NULL;
-    }
-#endif
 
     s_state.chat_list = NULL;
     s_state.ptt_btn = NULL;
@@ -693,20 +669,8 @@ static void show_screen_async_cb(void* data)
      * to 857 KB only delayed the crash; the root cause is the rasterizer, so
      * we moved to a pre-rasterized static font.  See lv_font_misans_16_cjk.c
      * and the fontgen notes in docs. */
-#if LV_FONT_MISANS_16_CJK
     /* Already set in init(); nothing to do at show time. */
     syslog(LOG_INFO, "[%s] using static MiSans-16 CJK font\n", TAG);
-#elif LV_USE_FREETYPE
-    if (!s_state.font) {
-        s_state.font = vg_font_create("MiSans-Medium", 18,
-            LV_FREETYPE_FONT_STYLE_NORMAL);
-        if (s_state.font) {
-            lv_obj_set_style_text_font(s_state.screen, s_state.font, 0);
-        } else {
-            syslog(LOG_WARNING, "[%s] vg_font_create failed, keeping built-in\n", TAG);
-        }
-    }
-#endif
 
     syslog(LOG_INFO, "[%s] loading chat screen\n", TAG);
 

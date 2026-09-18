@@ -432,8 +432,6 @@ static void cron_process_due_jobs(void)
 static void* cron_task_main(void* arg)
 {
     (void)arg;
-    printf("DBG: cron thread RUN\n");
-    fflush(stdout);
 
     while (s_cron_running) {
         /* Use timedwait instead of usleep so that cron_nudge() can

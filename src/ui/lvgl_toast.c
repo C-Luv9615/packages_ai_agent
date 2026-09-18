@@ -35,6 +35,11 @@
 #if defined(CONFIG_AI_AGENT_LVGL_UI) && defined(CONFIG_GRAPHICS_LVGL)
 #include <lvgl/lvgl.h>
 
+/* App-owned pre-rasterized MiSans-16 CJK font (compiled from
+ * src/ui/lv_font_misans_16_cjk.c, same pattern as xiaozhi_gui's
+ * font_awesome_*.c) — declared here instead of patching apps_graphics_lvgl. */
+LV_FONT_DECLARE(lv_font_misans_16_cjk);
+
 static const char *TAG = "lvgl_toast";
 
 #define TOAST_TITLE_LEN 32
@@ -161,9 +166,7 @@ static void toast_build(const toast_payload_t *p)
     lv_obj_t *title = lv_label_create(toast);
     if (title) {
         lv_label_set_text(title, p->title);
-#if LV_FONT_MISANS_16_CJK
         lv_obj_set_style_text_font(title, &lv_font_misans_16_cjk, 0);
-#endif
         lv_obj_set_style_text_color(title, lv_color_hex(0xe8e8e8), 0);
         lv_obj_align(title, LV_ALIGN_TOP_LEFT, 14, 4);
     }
@@ -172,9 +175,7 @@ static void toast_build(const toast_payload_t *p)
     lv_obj_t *body = lv_label_create(toast);
     if (body) {
         lv_label_set_text(body, p->body);
-#if LV_FONT_MISANS_16_CJK
         lv_obj_set_style_text_font(body, &lv_font_misans_16_cjk, 0);
-#endif
         lv_obj_set_style_text_color(body, lv_color_hex(0xc8c8d0), 0);
         lv_label_set_long_mode(body, LV_LABEL_LONG_DOT);
         lv_obj_set_width(body, w - 28);

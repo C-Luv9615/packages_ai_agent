@@ -473,8 +473,6 @@ static void* recording_thread(void* arg)
             syslog(LOG_INFO,
                 "[%s] chunk#%d: %d bytes, peak=%ld\n",
                 TAG, chunk_count, n, (long)peak);
-            printf("DBG: chunk#%d: %d bytes, peak=%ld\n",
-                chunk_count, n, (long)peak);
         }
 
 #ifdef CONFIG_AI_AGENT_AUDIO_PREPROCESS
@@ -493,7 +491,6 @@ static void* recording_thread(void* arg)
     if (dump_fd >= 0) {
         close(dump_fd);
         syslog(LOG_INFO, "[%s] PCM dump saved to /data/cap_dump.pcm\n", TAG);
-        printf("DBG: PCM dump saved to /data/cap_dump.pcm\n");
     }
 
     pthread_mutex_lock(&s_voice.lock);
@@ -508,9 +505,6 @@ static void* recording_thread(void* arg)
     syslog(LOG_INFO,
         "[%s] recording thread exit: %d chunks, %zu read, %zu sent%s\n",
         TAG, chunk_count, total_bytes_read, total_bytes_sent,
-        abnormal_exit ? " (abnormal)" : "");
-    printf("DBG: rec exit: %d chunks, %zu read, %zu sent%s\n",
-        chunk_count, total_bytes_read, total_bytes_sent,
         abnormal_exit ? " (abnormal)" : "");
     return NULL;
 }
@@ -679,18 +673,12 @@ int voice_channel_start(void)
      * the first 300-800ms of speech to be lost.
      *
      * If the pre-open fails we fall back to batch mode as before. */
-    printf("VDBG: voice_channel_start: opening ASR stream (TLS)...\n");
-    fflush(stdout);
     voice_asr_stream_t* pre_stream = voice_asr_stream_open();
     if (!pre_stream) {
         syslog(LOG_WARNING,
             "[%s] pre-open ASR failed, will retry in thread\n", TAG);
-        printf("VDBG: ASR pre-open FAILED (batch fallback)\n");
-        fflush(stdout);
     } else {
         syslog(LOG_INFO, "[%s] ASR pre-connected\n", TAG);
-        printf("VDBG: ASR pre-connected OK\n");
-        fflush(stdout);
         s_voice.asr_stream = pre_stream;
     }
 
@@ -698,9 +686,6 @@ int voice_channel_start(void)
      * recording thread is spawned so the consumer is ready before
      * audio frames begin flowing, preventing media_recorder queue
      * overflow "data queue is more than max count(4)"). */
-    printf("VDBG: voice_channel_start: opening capture %s\n",
-        AGENT_AUDIO_CAPTURE_DEV);
-    fflush(stdout);
     s_voice.cap = audio_capture_open(
         AGENT_AUDIO_CAPTURE_DEV,
         AGENT_VOICE_SAMPLE_RATE,
@@ -714,8 +699,6 @@ int voice_channel_start(void)
         }
         pthread_mutex_unlock(&s_voice.lock);
         syslog(LOG_ERR, "[%s] capture open failed\n", TAG);
-        printf("VDBG: voice_channel_start: capture open FAILED\n");
-        fflush(stdout);
         return -EIO;
     }
 
@@ -752,8 +735,7 @@ int voice_channel_start(void)
     sem_wait(&s_voice.rec_ready);
 
     if (audio_capture_start(s_voice.cap) < 0) {
-        printf("VDBG: voice_channel_start: capture start FAILED\n");
-        fflush(stdout);
+        syslog(LOG_ERR, "[%s] capture start failed\n", TAG);
         pthread_mutex_lock(&s_voice.lock);
         s_voice.state = VOICE_IDLE;
         if (s_voice.asr_stream) {
@@ -840,8 +822,6 @@ int voice_channel_stop(void)
         } else {
             syslog(LOG_WARNING,
                 "[%s] stream ASR failed: %d\n", TAG, ret);
-            printf("DBG: stream ASR failed ret=%d text='%.120s'\n",
-                ret, text);
         }
         return 0;
     }

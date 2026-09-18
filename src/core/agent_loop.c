@@ -1022,8 +1022,6 @@ static char* run_react_loop(const char* sys_prompt, cJSON* messages,
     int name_repeat;
     int iteration;
     char* final_text = NULL;
-    int continue_nudges = 0;
-    bool tool_used_this_turn = false;
 
     prev_sig[0] = '\0';
     dup_count = 0;
@@ -1147,32 +1145,6 @@ static char* run_react_loop(const char* sys_prompt, cJSON* messages,
             TAG, resp.text_len, resp.tool_use, resp.call_count);
 
         if (!resp.tool_use) {
-            /* Auto-continuation: if tools were already used this turn and
-             * the model is ending with text (no tool call), nudge it once
-             * to finish any remaining requested steps (e.g. git add/commit)
-             * before accepting the reply. Gated on tool_used_this_turn so
-             * plain chat replies are unaffected, and bounded by
-             * AGENT_MAX_CONTINUE_NUDGES to avoid loops. */
-            if (tool_used_this_turn
-                && continue_nudges < AGENT_MAX_CONTINUE_NUDGES) {
-                continue_nudges++;
-                syslog(LOG_INFO,
-                    "[%s] Auto-continuation nudge %d/%d\n",
-                    TAG, continue_nudges, AGENT_MAX_CONTINUE_NUDGES);
-                cJSON* nudge = cJSON_CreateObject();
-                cJSON_AddStringToObject(nudge, "role", "user");
-                cJSON_AddStringToObject(nudge, "content",
-                    "You have NOT finished. Re-read my original request and "
-                    "perform EVERY remaining action by CALLING the "
-                    "appropriate tool right now (for example staging and "
-                    "committing the changes). Do not reply with a text "
-                    "summary until all requested actions have actually been "
-                    "executed via tools.");
-                cJSON_AddItemToArray(messages, nudge);
-                llm_response_free(&resp);
-                continue;
-            }
-
             /* Cascade routing: if AUTO profile selected a cheap backend
              * for a SIMPLE query but the response looks inadequate,
              * retry once with PREMIUM tier. */
@@ -1285,7 +1257,6 @@ static char* run_react_loop(const char* sys_prompt, cJSON* messages,
         add_assistant_message(messages, &resp);
         add_tool_result_messages(messages, &resp, tool_output,
             tool_size, msg->channel, msg->chat_id);
-        tool_used_this_turn = true;
 
         /* Local tool shortcut: if the single tool in this round is a
          * local file op, skip the next LLM round and use the tool

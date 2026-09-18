@@ -1004,7 +1004,6 @@ int volc_asr_stream_finish(volc_asr_stream_t* s,
     if (ret != 0) {
         syslog(LOG_ERR, "[%s] stream: send last chunk failed: %d\n",
             TAG, ret);
-        printf("DBG: stream send-last-chunk failed: %d\n", ret);
         asr_tls_free(&s->tls);
         free(s);
         return ret;
@@ -1022,14 +1021,13 @@ int volc_asr_stream_finish(volc_asr_stream_t* s,
              * full accumulated string, so if we already captured text,
              * accept it as definitive instead of failing the stream. */
             if (text_out[0] != '\0') {
-                printf("DBG: stream recv err %d after text, using "
-                    "recognized text\n", ret);
+                syslog(LOG_WARNING,
+                    "[%s] stream: recv err %d after text, "
+                    "using recognized text\n", TAG, ret);
                 break;
             }
             syslog(LOG_ERR, "[%s] stream: recv error: %d\n",
                 TAG, ret);
-            printf("DBG: stream recv error: %d (attempt %d)\n",
-                ret, attempts);
             asr_tls_free(&s->tls);
             free(s);
             return ret;
@@ -1040,14 +1038,14 @@ int volc_asr_stream_finish(volc_asr_stream_t* s,
              * closes.  Accept it as definitive — a non-empty final
              * breaks out with the recognized text, an empty final
              * falls through to the -ENODATA return below. */
-            printf("DBG: stream final#%d: text='%.120s'\n",
-                attempts, text_out);
+            syslog(LOG_INFO, "[%s] stream: final#%d text='%.120s'\n",
+                TAG, attempts, text_out);
             break;
         }
         attempts++;
     }
-    printf("DBG: stream recv done: %d attempts, text='%.120s'\n",
-        attempts, text_out);
+    syslog(LOG_INFO, "[%s] stream: recv done, %d attempts, text='%.120s'\n",
+        TAG, attempts, text_out);
 
     asr_tls_free(&s->tls);
     free(s);

@@ -109,10 +109,6 @@
 #define AGENT_AI_AGENT_MAX_TOOL_ITER 10
 #define AGENT_MAX_TOOL_CALLS 2
 #define AGENT_TOOL_NAME_REPEAT_MAX 4
-/* Auto-continuation: when the model tries to end a turn with text after
- * having already used tools, nudge it up to this many times to finish any
- * remaining steps (e.g. git add/commit) before accepting the reply. */
-#define AGENT_MAX_CONTINUE_NUDGES 2
 
 /* ── LLM Watchdog ──────────────────────────────────────────── */
 /* Agent-level timeout for a single LLM call (seconds).
@@ -120,13 +116,13 @@
  * a timeout and replies with a user-friendly error message.
  * The socket-level SO_RCVTIMEO (AGENT_LLM_SOCKET_TIMEOUT_SEC)
  * acts as the hard backstop that actually unblocks the read. */
-#define AGENT_LLM_TIMEOUT_SEC 120
+#define AGENT_LLM_TIMEOUT_SEC 60
 
 /* Socket-level read timeout applied via SO_RCVTIMEO in vela_tls.
  * Must be >= AGENT_LLM_TIMEOUT_SEC to allow the agent-level
  * watchdog to fire first on normal slow responses.  Set higher
  * to cover TLS handshake + full response read. */
-#define AGENT_LLM_SOCKET_TIMEOUT_SEC 180
+#define AGENT_LLM_SOCKET_TIMEOUT_SEC 120
 
 /* ── Timezone (POSIX TZ format) ────────────────────────────── */
 #define AGENT_TIMEZONE "CST-8"
@@ -351,6 +347,22 @@
 #define AGENT_CFG_KEY_MQTT_TOPIC_OUT "mqtt_topic_out"
 #define AGENT_CFG_KEY_MQTT_USERNAME "mqtt_username"
 #define AGENT_CFG_KEY_MQTT_PASSWORD "mqtt_password"
+
+/* ── Remote-control channel (drives a remote ACP agent) ─────── */
+#define AGENT_REMOTE_CTRL_STACK (12 * 1024)
+#define AGENT_REMOTE_CTRL_PRIO 45
+
+/* Default budget for one remote turn. A turn held up by a permission request
+ * cannot finish until a human answers on this device, so the tool reports what
+ * it has rather than waiting indefinitely. */
+#define AGENT_REMOTE_CTRL_TURN_TIMEOUT_MS 120000
+
+/* Credentials are read from the config store, never from a command line. */
+#define AGENT_CFG_KEY_REMOTE_BROKER "remote_broker"
+#define AGENT_CFG_KEY_REMOTE_DEVICE_ID "remote_device_id"
+#define AGENT_CFG_KEY_REMOTE_USERNAME "remote_username"
+#define AGENT_CFG_KEY_REMOTE_PASSWORD "remote_password"
+#define AGENT_CFG_KEY_REMOTE_TOPIC_PREFIX "remote_topic_prefix"
 
 /* ── Voice Channel (Doubao ASR/TTS) ─────────────────────────── */
 #define AGENT_CHAN_VOICE "voice"
