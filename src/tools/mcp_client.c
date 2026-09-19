@@ -917,6 +917,11 @@ int mcp_client_execute(const char* name, const char* input_json,
 
     if (!srv_name) {
         pthread_mutex_unlock(&s_mtx);
+        /* Fill the reason so callers that log the output buffer (e.g. the
+         * notify poller) don't print an empty error. */
+        snprintf(output, output_size,
+            "{\"error\":\"tool '%.32s' not discovered (%d tools loaded), "
+            "run mcp_discover\"}", name, s_tool_count);
         return ERROR;
     }
 
@@ -933,8 +938,12 @@ int mcp_client_execute(const char* name, const char* input_json,
 
     pthread_mutex_unlock(&s_mtx);
 
-    if (!found)
+    if (!found) {
+        snprintf(output, output_size,
+            "{\"error\":\"server '%.32s' not configured, run mcp_add\"}",
+            srv_name);
         return ERROR;
+    }
 
     /* Step 2: build request and do network call WITHOUT lock */
 

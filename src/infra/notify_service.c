@@ -59,7 +59,7 @@ static const char *TAG = "notify";
 typedef struct {
     bool enabled;
     char server_name[32];   /* "gerrit" / "jira" — MCP server name */
-    char tool_query[64];   /* "gerrit.query_changes" / "jira.search" */
+    char tool_query[64];   /* "gerrit.query_changes" / "jira.jira_search" */
     char query_args[256];   /* JSON args string */
     int interval_sec;
     char last_cursor[32];  /* Gerrit: max change num; Jira: last seen key */
@@ -143,7 +143,7 @@ static void notify_load_cfg(void)
     cfg_load_str(NOTIFY_SRC_JIRA, "server", j->server_name,
                  sizeof(j->server_name), "jira");
     cfg_load_str(NOTIFY_SRC_JIRA, "tool", j->tool_query,
-                 sizeof(j->tool_query), "jira.search");
+                 sizeof(j->tool_query), "jira.jira_search");
     {
         /* Default JQL: issues updated since boot time.  If a cursor was
          * persisted we use it; otherwise we fall back to "updated >= now". */
@@ -239,55 +239,126 @@ static void push_notify(notify_source_t src, const char *key,
 
 /* ── Gerrit dedup: extract new changes from query result ─────── */
 
-static int gerrit_dedup(const char *json, notify_source_t src, int *n_new_out)
+/* Text fallback: the onedev gateway's query_changes returns a plain text
+ * summary whose lines look like "- 10365285: subject text".  Scan one
+ * buffer line by line and notify for ids above the cursor.  The cursor
+ * (last_max) advances to the newest id notified so the same change is
+ * not re-reported on the next poll. */
+static void gerrit_scan_text(const char *text, notify_source_t src,
+                             long *last_max, int *n_new)
 {
-    /* mcp_client_execute returns result.content[0].text which is itself
-     * often a JSON string (the change list).  Try to parse it as an array
-     * or as an object with an array field. */
-    cJSON *root = cJSON_Parse(json);
-    if (!root) {
-        return -1;
-    }
+    const char *p = text;
 
-    cJSON *arr = root;
-    if (cJSON_IsObject(root)) {
-        arr = cJSON_GetArrayItem(root, 0);
-        if (!cJSON_IsArray(arr)) {
-            arr = cJSON_GetObjectItem(root, "changes");
-            if (!cJSON_IsArray(arr)) {
-                arr = cJSON_GetObjectItem(root, "result");
+    while (p && *p) {
+        const char *eol = strchr(p, '\n');
+        size_t len = eol ? (size_t)(eol - p) : strlen(p);
+
+        /* "- <digits>: subject" */
+        if (len > 4 && p[0] == '-' && p[1] == ' ') {
+            char *end = NULL;
+            long id = strtol(p + 2, &end, 10);
+            if (end && end != p + 2 && *end == ':' && end[1] == ' '
+                && id > 0 && id > *last_max) {
+                const char *subj = end + 2;
+                size_t slen = len - (size_t)(subj - p);
+                char key[24];
+                char summary[80];
+
+                snprintf(key, sizeof(key), "%ld", id);
+                snprintf(summary, sizeof(summary), "%.*s",
+                         (int)(slen < sizeof(summary) - 1
+                               ? slen : sizeof(summary) - 1), subj);
+                /* Cap toasts per poll; last_max still advances so the
+                 * skipped backlog is not re-reported next time. */
+                if (*n_new < AGENT_NOTIFY_MAX_NEW) {
+                    push_notify(src, key, summary);
+                    (*n_new)++;
+                }
+                *last_max = id;
             }
         }
+        p = eol ? eol + 1 : NULL;
     }
-    if (!cJSON_IsArray(arr)) {
-        cJSON_Delete(root);
-        return -1;
-    }
+}
 
+static int gerrit_dedup(const char *json, notify_source_t src, int *n_new_out)
+{
+    /* mcp_client_execute returns result.content[0].text.  Two shapes seen:
+     *  1. structured JSON (array of change objects with _number/subject),
+     *  2. the onedev gateway's text summary wrapped as
+     *     [{"type":"text","text":"- 123: ...\n- 124: ..."}].
+     * Try the structured path first; if no item carried a numeric id,
+     * fall back to scanning the text payloads. */
     long last_max = strtol(s_cfg[src].last_cursor, NULL, 10);
     int n_new = 0;
 
-    cJSON *item;
-    cJSON_ArrayForEach(item, arr) {
-        cJSON *num = cJSON_GetObjectItem(item, "_number");
-        if (!num) num = cJSON_GetObjectItem(item, "number");
-        if (!num) num = cJSON_GetObjectItem(item, "change_id");
-        if (!num || !cJSON_IsNumber(num)) continue;
+    cJSON *root = cJSON_Parse(json);
+    if (root) {
+        cJSON *arr = root;
+        if (cJSON_IsObject(root)) {
+            arr = cJSON_GetArrayItem(root, 0);
+            if (!cJSON_IsArray(arr)) {
+                arr = cJSON_GetObjectItem(root, "changes");
+                if (!cJSON_IsArray(arr)) {
+                    arr = cJSON_GetObjectItem(root, "result");
+                }
+            }
+        }
 
-        long id = (long)num->valuedouble;
-        if (id <= last_max) continue;  /* already seen */
+        int n_struct = 0;
+        if (cJSON_IsArray(arr)) {
+            cJSON *item;
+            cJSON_ArrayForEach(item, arr) {
+                cJSON *num = cJSON_GetObjectItem(item, "_number");
+                if (!num) num = cJSON_GetObjectItem(item, "number");
+                if (!num) num = cJSON_GetObjectItem(item, "change_id");
+                if (!num || !cJSON_IsNumber(num)) continue;
+                n_struct++;
 
-        cJSON *subj = cJSON_GetObjectItem(item, "subject");
-        if (!subj) subj = cJSON_GetObjectItem(item, "summary");
-        const char *summary = (subj && cJSON_IsString(subj))
-                              ? subj->valuestring : "(no subject)";
+                long id = (long)num->valuedouble;
+                if (id <= last_max) continue;  /* already seen */
 
-        char key[24];
-        snprintf(key, sizeof(key), "%ld", id);
-        push_notify(src, key, summary);
-        n_new++;
+                cJSON *subj = cJSON_GetObjectItem(item, "subject");
+                if (!subj) subj = cJSON_GetObjectItem(item, "summary");
+                const char *summary = (subj && cJSON_IsString(subj))
+                                      ? subj->valuestring : "(no subject)";
 
-        last_max = id;  /* id > last_max guaranteed by the continue above */
+                char key[24];
+                snprintf(key, sizeof(key), "%ld", id);
+                /* Cap toasts per poll; last_max still advances so the
+                 * skipped backlog is not re-reported next time. */
+                if (n_new < AGENT_NOTIFY_MAX_NEW) {
+                    push_notify(src, key, summary);
+                    n_new++;
+                }
+
+                last_max = id;  /* id > last_max guaranteed above */
+            }
+        }
+
+        /* No structured ids found -> the array is a text-content wrapper;
+         * scan each item's "text" field for "- <id>: <subject>" lines. */
+        if (n_struct == 0 && cJSON_IsArray(arr)) {
+            cJSON *item;
+            cJSON_ArrayForEach(item, arr) {
+                cJSON *text = cJSON_GetObjectItem(item, "text");
+                if (text && cJSON_IsString(text)) {
+                    gerrit_scan_text(text->valuestring, src,
+                                     &last_max, &n_new);
+                }
+            }
+        } else if (n_struct == 0) {
+            /* Bare string / other shape: try the raw buffer as text. */
+            cJSON *text = (root && cJSON_IsString(root)) ? root : NULL;
+            if (text) {
+                gerrit_scan_text(text->valuestring, src, &last_max, &n_new);
+            }
+        }
+
+        cJSON_Delete(root);
+    } else {
+        /* Not JSON at all — treat the whole buffer as text output. */
+        gerrit_scan_text(json, src, &last_max, &n_new);
     }
 
     if (n_new > 0) {
@@ -296,7 +367,6 @@ static int gerrit_dedup(const char *json, notify_source_t src, int *n_new_out)
         persist_cursor(src);
     }
 
-    cJSON_Delete(root);
     *n_new_out = n_new;
     return 0;
 }
@@ -327,16 +397,25 @@ static int jira_dedup(const char *json, notify_source_t src, int *n_new_out)
 
         cJSON *fields = cJSON_GetObjectItem(item, "fields");
         const char *summary = "(no summary)";
-        if (fields) {
-            cJSON *s = cJSON_GetObjectItem(fields, "summary");
-            if (s && cJSON_IsString(s)) summary = s->valuestring;
+        /* jira_search with a "fields" argument returns the requested fields
+         * inline on each issue (no "fields" wrapper); full-issue responses
+         * nest them under "fields".  Accept both. */
+        cJSON *s = cJSON_GetObjectItem(item, "summary");
+        if (!s && fields) {
+            s = cJSON_GetObjectItem(fields, "summary");
         }
+        if (s && cJSON_IsString(s)) summary = s->valuestring;
 
-        push_notify(src, key, summary);
+        /* Mark every issue seen (even past the cap) so a large backlog
+         * is not re-scanned as new on the next poll; only the first
+         * AGENT_NOTIFY_MAX_NEW issues pop a toast. */
         jira_lru_add(key);
         strlcpy(s_cfg[src].last_cursor, key,
                 sizeof(s_cfg[src].last_cursor));
-        n_new++;
+        if (n_new < AGENT_NOTIFY_MAX_NEW) {
+            push_notify(src, key, summary);
+            n_new++;
+        }
     }
 
     if (n_new > 0) {
@@ -368,6 +447,18 @@ static void poll_one_source(notify_source_t src)
 
     int rc = mcp_client_execute(c->tool_query, c->query_args,
                                 buf, AGENT_NOTIFY_JSON_BUF_SIZE);
+    if (rc != OK && strstr(buf, "not discovered")) {
+        /* Self-heal: if the boot-time discover failed (network race or a
+         * transient gateway error), the tool table stays empty and every
+         * poll fails forever.  Re-discover now — the poll interval already
+         * rate-limits this — and retry once. */
+        syslog(LOG_WARNING, "[%s] %s tools missing, re-discovering\n",
+               TAG, c->server_name);
+        mcp_client_discover();
+        buf[0] = '\0';
+        rc = mcp_client_execute(c->tool_query, c->query_args,
+                                buf, AGENT_NOTIFY_JSON_BUF_SIZE);
+    }
     if (rc != OK) {
         snprintf(s_last_err, sizeof(s_last_err), "%s exec failed", c->server_name);
         syslog(LOG_WARNING, "[%s] %s poll failed: %.80s\n", TAG,

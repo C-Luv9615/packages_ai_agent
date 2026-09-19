@@ -317,7 +317,11 @@
 
 /* ── Notify Service (Gerrit/Jira polling → LVGL toast) ────── */
 #ifdef CONFIG_AI_AGENT_NOTIFY_SERVICE
-#define AGENT_NOTIFY_STACK (8 * 1024)   /* mcp_client sync HTTP needs deeper stack */
+/* The poll runs mcp_client_execute → vela_tls HTTPS handshake on this
+ * thread's stack; 8KB overflowed into the heap on the first successful
+ * Gerrit poll (recursive assert).  Agent loop does the same TLS work on
+ * a 64KB stack — 32KB leaves headroom for handshake + cJSON parsing. */
+#define AGENT_NOTIFY_STACK (32 * 1024)
 #define AGENT_NOTIFY_PRIO 35            /* below agent_loop (60) + outbound (50) */
 #ifndef CONFIG_AI_AGENT_NOTIFY_INTERVAL_SEC
 #define CONFIG_AI_AGENT_NOTIFY_INTERVAL_SEC 60
