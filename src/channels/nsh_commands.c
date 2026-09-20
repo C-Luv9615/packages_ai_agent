@@ -296,13 +296,13 @@ static void cmd_memory_read(void)
     free(buf);
 }
 
-static void cmd_memory_write(int argc, char** argv)
+static void cmd_memory_write(const char* text)
 {
-    if (argc < 2) {
+    if (text == NULL || text[0] == '\0') {
         printf("Usage: memory_write <content>\n");
         return;
     }
-    memory_write_long_term(argv[1]);
+    memory_write_long_term(text);
     printf("MEMORY.md updated.\n");
 }
 
@@ -603,29 +603,21 @@ static void cmd_heartbeat_trigger(void)
     }
 }
 
-static void cmd_ask(int argc, char** argv)
+static void cmd_ask(const char* text)
 {
-    if (argc < 2) {
+    if (text == NULL || text[0] == '\0') {
         printf("Usage: ask <message>\n");
         return;
-    }
-
-    /* Concatenate all arguments as the message */
-    char content[256] = { 0 };
-    for (int i = 1; i < argc; i++) {
-        strncat(content, argv[i], sizeof(content) - strlen(content) - 1);
-        if (i < argc - 1)
-            strncat(content, " ", sizeof(content) - strlen(content) - 1);
     }
 
     agent_msg_t msg = { 0 };
     strncpy(msg.channel, "cli", sizeof(msg.channel) - 1);
     strncpy(msg.chat_id, "console", sizeof(msg.chat_id) - 1);
-    msg.content = strdup(content);
+    msg.content = strdup(text);
     if (msg.content)
         message_bus_push_inbound(&msg);
-    printf("Sent to agent: %s\n", content);
-    syslog(LOG_INFO, "[agent] ask: %s\n", content);
+    printf("Sent to agent: %s\n", text);
+    syslog(LOG_INFO, "[agent] ask: %s\n", text);
 }
 
 static void cmd_cron_start(void)
@@ -1028,6 +1020,20 @@ static void* cli_thread(void* arg)
             continue;
         }
 
+        /* Free-text commands (ask/rask/memory_write/voice_test_speak) read
+         * the untokensed remainder of the line, captured first because
+         * tokenise() splits the buffer in place and caps at MAX_ARGS words —
+         * without this, everything past the 7th word of a prompt was
+         * silently dropped. */
+        char rest[LINE_LEN];
+        {
+            const char* p = line;
+            while (*p == ' ' || *p == '\t') p++;
+            p += strcspn(p, " \t");
+            while (*p == ' ' || *p == '\t') p++;
+            snprintf(rest, sizeof(rest), "%s", p);
+        }
+
         int argc = tokenise(line, argv, MAX_ARGS);
         if (argc == 0) {
             pthread_mutex_lock(&g_stdout_lock);
@@ -1058,7 +1064,7 @@ static void* cli_thread(void* arg)
         else if (strcmp(cmd, "memory_read") == 0)
             cmd_memory_read();
         else if (strcmp(cmd, "memory_write") == 0)
-            cmd_memory_write(argc, argv);
+            cmd_memory_write(rest);
         else if (strcmp(cmd, "session_list") == 0)
             cmd_session_list();
         else if (strcmp(cmd, "session_clear") == 0)
@@ -1100,7 +1106,7 @@ static void* cli_thread(void* arg)
         else if (strcmp(cmd, "heartbeat_trigger") == 0)
             cmd_heartbeat_trigger();
         else if (strcmp(cmd, "ask") == 0)
-            cmd_ask(argc, argv);
+            cmd_ask(rest);
         else if (strcmp(cmd, "cron_start") == 0)
             cmd_cron_start();
 #ifdef CONFIG_AI_AGENT_NODE
@@ -1122,7 +1128,7 @@ static void* cli_thread(void* arg)
          * A second name for the same action would only be one more thing to
          * remember and one more place to fall out of date. */
         else if (strcmp(cmd, "rask") == 0)
-            cmd_remote_ask(argc, argv);
+            cmd_remote_ask(rest);
         else if (strcmp(cmd, "rstat") == 0)
             cmd_remote_status();
         else if (strcmp(cmd, "rreply") == 0)
@@ -1158,7 +1164,7 @@ static void* cli_thread(void* arg)
         else if (strcmp(cmd, "voice_test_beep") == 0)
             cmd_voice_test_beep(argc, argv);
         else if (strcmp(cmd, "voice_test_speak") == 0)
-            cmd_voice_test_speak(argc, argv);
+            cmd_voice_test_speak(rest);
         else if (strcmp(cmd, "set_voice_tts") == 0)
             cmd_set_voice_tts(argc, argv);
         else if (strcmp(cmd, "set_voice_asr") == 0)

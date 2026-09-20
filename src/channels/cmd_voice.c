@@ -109,15 +109,15 @@ void cmd_voice_test_beep(int argc, char** argv)
     printf("Beep done: %d\n", ret);
 }
 
-void cmd_voice_test_speak(int argc, char** argv)
+void cmd_voice_test_speak(const char* text)
 {
-    if (argc < 2) {
+    if (text == NULL || text[0] == '\0') {
         printf("Usage: voice_test_speak <text>\n");
         return;
     }
 
-    printf("Speak: \"%s\" ...\n", argv[1]);
-    int ret = voice_channel_speak(argv[1]);
+    printf("Speak: \"%s\" ...\n", text);
+    int ret = voice_channel_speak(text);
     printf("Speak done: %d\n", ret);
 }
 

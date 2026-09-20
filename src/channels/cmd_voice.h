@@ -24,6 +24,6 @@ void cmd_voice_stop(void);
 void cmd_voice_test_tts(int argc, char** argv);
 void cmd_voice_test_asr(int argc, char** argv);
 void cmd_voice_test_beep(int argc, char** argv);
-void cmd_voice_test_speak(int argc, char** argv);
+void cmd_voice_test_speak(const char* text);
 void cmd_set_voice_tts(int argc, char** argv);
 void cmd_set_voice_asr(int argc, char** argv);

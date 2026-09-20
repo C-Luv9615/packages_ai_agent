@@ -33,7 +33,7 @@ void cmd_weixin_login(void);
 void cmd_set_remote(int argc, char** argv);
 void cmd_set_remote_auth(int argc, char** argv);
 void cmd_remote_status(void);
-void cmd_remote_ask(int argc, char** argv);
+void cmd_remote_ask(const char* text);
 void cmd_remote_output(void);
 void cmd_remote_usage(void);
 

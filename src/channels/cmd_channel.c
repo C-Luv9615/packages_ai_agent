@@ -262,21 +262,13 @@ void cmd_remote_status(void)
     printf("====================\n");
 }
 
-void cmd_remote_ask(int argc, char** argv)
+void cmd_remote_ask(const char* text)
 {
-    char text[REMOTE_PROMPT_TEXT_MAX + 1] = { 0 };
     char reply[256];
 
-    if (argc < 2) {
+    if (text == NULL || text[0] == '\0') {
         printf("Usage: rask <instruction>\n");
         return;
-    }
-
-    for (int i = 1; i < argc; i++) {
-        strncat(text, argv[i], sizeof(text) - strlen(text) - 1);
-        if (i < argc - 1) {
-            strncat(text, " ", sizeof(text) - strlen(text) - 1);
-        }
     }
 
     /* Non-blocking on purpose: if this waited for the turn, a remote permission
