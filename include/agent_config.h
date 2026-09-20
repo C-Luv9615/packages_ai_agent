@@ -102,7 +102,10 @@
 #define AGENT_FEISHU_MAX_MSG_LEN 4000 /* Feishu text message limit */
 
 /* ── Agent Loop ─────────────────────────────────────────────── */
-#define AGENT_AI_AGENT_STACK (64 * 1024)
+#define AGENT_AI_AGENT_STACK (32 * 1024) /* was 64K: ENOMEM on small-RAM
+                                  * targets whose heap fragments after boot
+                                  * (biggest free block < 64K observed with
+                                  * 179K total free on a BK7258 AP) */
 #define AGENT_AI_AGENT_PRIO 60
 #define AGENT_AI_AGENT_CORE 0
 #define AGENT_AI_AGENT_MAX_HISTORY 10
@@ -161,7 +164,7 @@
 /* ── Message Bus ────────────────────────────────────────────── */
 #define AGENT_BUS_QUEUE_LEN 16
 #define AGENT_BUS_PUSH_TIMEOUT_MS 5000
-#define AGENT_OUTBOUND_STACK (48 * 1024)
+#define AGENT_OUTBOUND_STACK (24 * 1024) /* was 48K, same fragmentation ceiling */
 #define AGENT_OUTBOUND_PRIO 50
 #define AGENT_OUTBOUND_CORE 0
 
@@ -228,7 +231,7 @@
 #define AGENT_WS_CLIENT_STACK (12 * 1024)
 
 /* ── Serial CLI ─────────────────────────────────────────────── */
-#define AGENT_CLI_STACK (48 * 1024)
+#define AGENT_CLI_STACK (24 * 1024) /* was 48K, same fragmentation ceiling */
 #define AGENT_CLI_PRIO 30
 #define AGENT_CLI_CORE 0
 
