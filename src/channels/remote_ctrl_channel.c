@@ -133,6 +133,20 @@ static void on_session_event(void* context, enum remote_event_e event,
             }
             g_mirror_turn = false;
         }
+#ifdef CONFIG_AI_AGENT_LVGL_UI
+        /* A remote coding turn runs for minutes and the user walked away —
+         * the approval toast (above) already owns the "needs you" case; this
+         * one says the wait is over. Voice is already covered by the mirror
+         * branch, so the toast only needs the first line of the reply. */
+        if (text != NULL && text[0] != '\0') {
+            char body[112];
+            snprintf(body, sizeof(body), "任务完成: %s", text);
+            char* nl = strchr(body, '\n');
+            if (nl != NULL)
+                *nl = '\0';
+            lvgl_toast_show_async("远程编码", body, 0x4caf50, 4000);
+        }
+#endif
         break;
 
     case REMOTE_EVENT_OUTPUT_GAP:
