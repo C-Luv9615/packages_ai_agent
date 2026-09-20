@@ -273,7 +273,10 @@ __attribute__((weak)) bool agent_shutdown_requested(void)
 
 /* ── Media player write_data stub ─────────────────────────── */
 
-__attribute__((weak)) int media_player_write_data(void* player,
+/* Signature must match frameworks/multimedia/media/include/media_player.h
+ * (ssize_t) — an int stub silently truncates and breaks the partial-write
+ * retry loop in audio_playback.c. */
+__attribute__((weak)) ssize_t media_player_write_data(void* player,
     const void* data, size_t len)
 {
     (void)player;

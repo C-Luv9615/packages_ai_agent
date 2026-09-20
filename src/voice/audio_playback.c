@@ -16,15 +16,18 @@
 
 /* audio_playback.c - Streaming audio playback.
  *
- * Two backends:
- *  - NUTTX direct (/dev/audio/pcm0p): gated by CONFIG_AI_AGENT_AUDIO_NUTTX_DIRECT.
+ * Two backends, media framework first:
+ *  - media_player: preferred path — the framework's TTS lane (graph.conf
+ *    abufsrc@TTS -> alsasink@pcm0p / SCOtx), falling back to the Music lane
+ *    on graphs without a TTS entry.  Keeps playback on the same media
+ *    routing the capture side already uses.
+ *  - NUTTX direct (/dev/audio/pcm0p): fallback for boards with no media
+ *    server, gated by CONFIG_AI_AGENT_AUDIO_NUTTX_DIRECT (e.g. BK7258).
  *    Drives the standard NuttX audio framework device via open/ioctl/enqueue,
  *    the only path the BK7258 pcm0p lower-half implements (its ->write method
  *    is NULL).  Buffers are allocated with AUDIOIOC_ALLOCBUFFER, filled, and
  *    pushed with AUDIOIOC_ENQUEUEBUFFER; a message queue delivers
  *    AUDIO_MSG_DEQUEUE when the DMA has drained a buffer so it can be reused.
- *  - media_player: portable fallback, used when the NuttX device open fails
- *    or when CONFIG_AI_AGENT_AUDIO_NUTTX_DIRECT is off (e.g. qemu goldfish).
  *
  * write() enqueues non-blocking and only blocks for back-pressure when all
  * buffers are in flight.  close() drains the enqueued audio before stopping
@@ -91,6 +94,41 @@ static void* s_active_player;
 
 /* ── media_player backend ───────────────────────────────── */
 
+/* Open/prepare/start one stream lane.  Returns 0 on success. */
+static int open_media_lane(void** out_player, const char* stream,
+    unsigned int sample_rate, unsigned int channels,
+    unsigned int bits_per_sample)
+{
+    void* player = media_player_open(stream);
+    if (!player) {
+        syslog(LOG_ERR, "[%s] media_player_open(%s) failed\n", TAG, stream);
+        return -EIO;
+    }
+
+    char opts[PB_OPTIONS_LEN];
+    snprintf(opts, sizeof(opts),
+        "format=s%ule:sample_rate=%u:ch_layout=%s",
+        bits_per_sample, sample_rate,
+        (channels == 1) ? "mono" : "stereo");
+
+    int ret = media_player_prepare(player, NULL, opts);
+    if (ret < 0) {
+        syslog(LOG_ERR, "[%s] prepare(%s) failed: %d\n", TAG, stream, ret);
+        media_player_close(player, 0);
+        return ret;
+    }
+
+    ret = media_player_start(player);
+    if (ret < 0) {
+        syslog(LOG_ERR, "[%s] start(%s) failed: %d\n", TAG, stream, ret);
+        media_player_close(player, 0);
+        return ret;
+    }
+
+    *out_player = player;
+    return 0;
+}
+
 static int open_media_player(audio_playback_t* pb,
     unsigned int sample_rate, unsigned int channels,
     unsigned int bits_per_sample)
@@ -103,30 +141,21 @@ static int open_media_player(audio_playback_t* pb,
         usleep(100000);
     }
 
-    void* player = media_player_open(MEDIA_STREAM_MUSIC);
-    if (!player) {
-        syslog(LOG_ERR, "[%s] media_player_open failed\n", TAG);
-        return -EIO;
-    }
-
-    char opts[PB_OPTIONS_LEN];
-    snprintf(opts, sizeof(opts),
-        "format=s%ule:sample_rate=%u:ch_layout=%s",
-        bits_per_sample, sample_rate,
-        (channels == 1) ? "mono" : "stereo");
-
-    int ret = media_player_prepare(player, NULL, opts);
+    /* Prefer the dedicated TTS lane (its own abufsrc in graph.conf, so a
+     * music player or recorder session can hold the Music lane without
+     * either side force-closing the other), then the generic Music lane
+     * for graphs that never defined a TTS entry. */
+    void* player = NULL;
+    int ret = open_media_lane(&player, MEDIA_STREAM_TTS,
+        sample_rate, channels, bits_per_sample);
     if (ret < 0) {
-        syslog(LOG_ERR, "[%s] prepare failed: %d\n", TAG, ret);
-        media_player_close(player, 0);
-        return ret;
-    }
-
-    ret = media_player_start(player);
-    if (ret < 0) {
-        syslog(LOG_ERR, "[%s] start failed: %d\n", TAG, ret);
-        media_player_close(player, 0);
-        return ret;
+        syslog(LOG_WARNING, "[%s] TTS lane unavailable (%d), trying Music\n",
+            TAG, ret);
+        ret = open_media_lane(&player, MEDIA_STREAM_MUSIC,
+            sample_rate, channels, bits_per_sample);
+        if (ret < 0) {
+            return ret;
+        }
     }
 
     pb->player = player;
@@ -459,21 +488,24 @@ audio_playback_t* audio_playback_open(const char* dev_path,
         return NULL;
     }
 
+    /* Prefer the media framework (same routing the capture side uses);
+     * fall back to the direct NuttX audio device on boards that have no
+     * media server but a pcm0p lower-half (e.g. BK7258). */
+    if (open_media_player(pb, sample_rate, channels, bits_per_sample) == 0) {
+        pb->backend = AUDIO_PB_BACKEND_MEDIA_PLAYER;
+        syslog(LOG_INFO, "[%s] backend: media_player\n", TAG);
+        return pb;
+    }
+
 #ifdef CONFIG_AI_AGENT_AUDIO_NUTTX_DIRECT
-    /* Prefer the NuttX audio framework device when present (e.g. BK7258
-     * /dev/audio/pcm0p). */
     if (open_nuttx_playback(pb, dev_path, sample_rate, channels,
             bits_per_sample) == 0) {
         pb->backend = AUDIO_PB_BACKEND_NUTTX;
+        syslog(LOG_INFO, "[%s] backend: nuttx direct (%s)\n",
+            TAG, dev_path);
         return pb;
     }
 #endif
-
-    /* Fall back to the portable media_player backend. */
-    if (open_media_player(pb, sample_rate, channels, bits_per_sample) == 0) {
-        pb->backend = AUDIO_PB_BACKEND_MEDIA_PLAYER;
-        return pb;
-    }
 
     free(pb);
     return NULL;
@@ -496,11 +528,23 @@ int audio_playback_write(audio_playback_t* pb, const void* buf, size_t len)
 #endif
 
     case AUDIO_PB_BACKEND_MEDIA_PLAYER: {
-        ssize_t n = media_player_write_data(pb->player, buf, len);
-        if (n > 0) {
+        /* media_player_write_data may take less than asked (its socket
+         * write loop stops at the first short send); re-feed the remainder
+         * so a clip never ends up truncated mid-sentence. */
+        const char* p = buf;
+        size_t left = len;
+        while (left > 0 && !pb->stopped) {
+            ssize_t n = media_player_write_data(pb->player, p, left);
+            if (n <= 0) {
+                /* 0 = the media server took nothing and said nothing;
+                 * report EIO rather than a silent short write. */
+                return (n < 0) ? (int)n : -EIO;
+            }
+            p += n;
+            left -= (size_t)n;
             pb->total_written += (size_t)n;
         }
-        return (int)n;
+        return (int)(len - left);
     }
 
     default:

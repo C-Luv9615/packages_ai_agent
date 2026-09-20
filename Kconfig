@@ -173,13 +173,13 @@ config AI_AGENT_AUDIO_NUTTX_DIRECT
 	default n
 	depends on AUDIO
 	---help---
-		Use the NuttX audio framework devices directly instead of the
-		portable media_recorder / media_player backends: capture via
-		/dev/audio/pcm0c (open/ioctl/read) and playback via
-		/dev/audio/pcm0p (open/ioctl/enqueue). Use this on boards that
-		register NuttX audio lower-halves (e.g. BK7258 /dev/audio/pcm0c
-		and /dev/audio/pcm0p). When enabled, the agent still falls back
-		to the media framework at runtime if the device open fails.
+		Fallback audio backend for boards that have NuttX audio
+		lower-halves but no media server (e.g. BK7258 /dev/audio/pcm0c
+		and /dev/audio/pcm0p): capture via open/ioctl/read and playback
+		via open/ioctl/enqueue. The media_recorder / media_player
+		backends are always tried first; this path is only taken when
+		they are unavailable, so leave it off on boards that run the
+		media framework (e.g. qemu goldfish).
 
 config AI_AGENT_CAMERA
 	bool "Enable camera capture tool"
