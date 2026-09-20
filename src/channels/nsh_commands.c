@@ -260,9 +260,16 @@ static void cmd_net_diag(int argc, char** argv)
     }
 
     if (strcmp(argv[1], "ping") == 0 && argc >= 3) {
+#ifdef CONFIG_SYSTEM_POPEN
         char cmd[128];
         snprintf(cmd, sizeof(cmd), "ping -c 3 %s", argv[2]);
         system(cmd);
+#else
+        /* No shell to spawn on this config (flat NuttX); the operator
+         * can run the ping command directly in the console instead. */
+        printf("ping: run 'ping %s' from the shell (no system() here)\n",
+            argv[2]);
+#endif
     } else if (strcmp(argv[1], "http") == 0 && argc >= 3) {
         printf("HTTP HEAD %s ...\n", argv[2]);
         /* Simple connectivity test using existing TLS layer */

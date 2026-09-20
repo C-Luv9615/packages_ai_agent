@@ -18,6 +18,9 @@
 #include "agent_compat.h"
 
 #include <arpa/inet.h>
+#ifdef CONFIG_NETDB_DNSCLIENT
+#  include <nuttx/net/dns.h>
+#endif
 #include <ifaddrs.h>
 #include <netinet/in.h>
 #include <string.h>
@@ -567,7 +570,6 @@ int network_reconnect(void)
 
 int network_set_dns(const char* primary, const char* secondary)
 {
-    FILE* fp = NULL;
     int ret = ERROR;
 
     if (!primary || primary[0] == '\0') {
@@ -575,19 +577,43 @@ int network_set_dns(const char* primary, const char* secondary)
         return -EINVAL;
     }
 
-    fp = fopen("/tmp/resolv.conf", "w");
-    if (!fp) {
-        syslog(LOG_ERR, "[%s] Cannot open /tmp/resolv.conf: %d\n",
-            TAG, errno);
-        return -errno;
-    }
+#ifdef CONFIG_NETDB_DNSCLIENT
+    /* Register with the resolver directly; on flat NuttX there is no
+     * /etc/resolv.conf reader, and no /tmp to write one into. */
+    {
+        struct in_addr addr;
 
-    fprintf(fp, "nameserver %s\n", primary);
-    if (secondary && secondary[0] != '\0') {
-        fprintf(fp, "nameserver %s\n", secondary);
-    }
+        if (inet_pton(AF_INET, primary, &addr) == 1) {
+            dns_add_nameserver((FAR const struct sockaddr_in *)&addr,
+                sizeof(struct sockaddr_in));
+        } else {
+            syslog(LOG_ERR, "[%s] set_dns: bad primary '%s'\n", TAG, primary);
+        }
 
-    fclose(fp);
+        if (secondary && secondary[0] != '\0' &&
+            inet_pton(AF_INET, secondary, &addr) == 1) {
+            dns_add_nameserver((FAR const struct sockaddr_in *)&addr,
+                sizeof(struct sockaddr_in));
+        }
+    }
+#else
+    /* Hosts with a real /etc: write the file. */
+    {
+        FILE* fp = fopen("/tmp/resolv.conf", "w");
+        if (!fp) {
+            syslog(LOG_ERR, "[%s] Cannot open /tmp/resolv.conf: %d\n",
+                TAG, errno);
+            return -errno;
+        }
+
+        fprintf(fp, "nameserver %s\n", primary);
+        if (secondary && secondary[0] != '\0') {
+            fprintf(fp, "nameserver %s\n", secondary);
+        }
+
+        fclose(fp);
+    }
+#endif
 
     /* Persist to config_store */
     claw_config_set("net.dns_primary", primary);
