@@ -129,7 +129,9 @@ static void net_state_change_cb(net_state_t state, void* arg)
         feishu_bot_start();
 #endif
         agent_loop_start();
+#ifdef CONFIG_AI_AGENT_WS_SERVER
         ws_server_start();
+#endif
 #ifdef CONFIG_AI_AGENT_NODE
         node_client_start();
 #endif
@@ -180,8 +182,10 @@ static void* network_watch_task(void* arg)
 #endif
         if (agent_loop_start() != OK)
             syslog(LOG_WARNING, "[%s] agent_loop_start failed\n", TAG);
+#ifdef CONFIG_AI_AGENT_WS_SERVER
         if (ws_server_start() != OK)
             syslog(LOG_WARNING, "[%s] ws_server_start failed\n", TAG);
+#endif
 #ifdef CONFIG_AI_AGENT_NODE
         if (node_client_start() != OK)
             syslog(LOG_WARNING, "[%s] node_client_start failed\n", TAG);

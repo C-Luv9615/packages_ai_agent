@@ -327,6 +327,42 @@ config AI_AGENT_TLS_CONN_POOL_SIZE
 		reuse. Each slot uses ~12KB BSS (TLS context + raw
 		buffer). Set to 1 on memory-constrained boards.
 
+config AI_AGENT_WS_SERVER
+	bool "WebSocket server channel"
+	default y
+	depends on EXAMPLES_AI_AGENT_VELA
+	---help---
+		Run the local WebSocket server (port 8080 style console).
+		Disable on small-RAM targets: the accept thread needs its
+		own TLS-sized stack and pushes the heap over the edge
+		after the agent loop's buffers are allocated.  Boards that
+		reach their LLM over MQTT or Feishu do not need it.
+
+config AI_AGENT_TOOLS_WEARABLE
+	bool "Wearable sensor tools (battery/wear/screen/heartrate/steps/vibrate)"
+	default y
+	depends on EXAMPLES_AI_AGENT_VELA
+	---help---
+		Register the wearable sensor tool group.  Disable on boards
+		without the corresponding sensors; each registered tool
+		costs heap in the registry and the tools JSON.
+
+config AI_AGENT_TOOLS_MEDIA
+	bool "Music control tools"
+	default y
+	depends on EXAMPLES_AI_AGENT_VELA
+	---help---
+		Register the music playback tool group.  Disable on boards
+		without a media player.
+
+config AI_AGENT_TOOLS_QUICKAPP
+	bool "QuickApp launch tools"
+	default y
+	depends on EXAMPLES_AI_AGENT_VELA
+	---help---
+		Register quickapp launch/exit tools.  Disable on boards
+		without the quickapp runtime.
+
 config AI_AGENT_NOTIFY_SERVICE
 	bool "Enable Gerrit/Jira notify polling → LVGL toast"
 	default n

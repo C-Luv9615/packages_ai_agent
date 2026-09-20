@@ -333,6 +333,7 @@ int tool_registry_init(void)
 #endif
 
     /* System state tools */
+#ifdef CONFIG_AI_AGENT_TOOLS_WEARABLE
     REGISTER_TOOL_NO_PARAMS(
         "get_battery",
         "Get battery level, charging status, voltage, temperature.",
@@ -368,6 +369,7 @@ int tool_registry_init(void)
             "Strength 1-255")
             TOOL_SCHEMA_END(),
         tool_vibrate_execute);
+#endif /* AI_AGENT_TOOLS_WEARABLE */
 
     /* Feishu document tools */
     REGISTER_TOOL(
@@ -428,6 +430,7 @@ int tool_registry_init(void)
         tool_feishu_send_mention_execute);
 
     /* Music search */
+#ifdef CONFIG_AI_AGENT_TOOLS_MEDIA
     REGISTER_TOOL("music_search",
         "Search songs by keyword. Returns name, artist, URL. "
         "Does NOT play — call music_play with URL after.",
@@ -484,8 +487,10 @@ int tool_registry_init(void)
         "Get current music playback status including state, "
         "position, duration, volume, and track URL.",
         tool_music_status_execute);
+#endif /* AI_AGENT_TOOLS_MEDIA */
 
     /* QuickApp launch tool */
+#ifdef CONFIG_AI_AGENT_TOOLS_QUICKAPP
     REGISTER_TOOL("launch_quickapp",
         "Launch a QuickApp by package name.",
         TOOL_SCHEMA_BEGIN()
@@ -497,6 +502,7 @@ int tool_registry_init(void)
     REGISTER_TOOL_NO_PARAMS("exit_quickapp",
         "Exit current QuickApp, return to home.",
         tool_exit_quickapp_execute);
+#endif /* AI_AGENT_TOOLS_QUICKAPP */
 
 #ifdef CONFIG_AI_AGENT_REMOTE_CTRL
     /* Remote agent control. There is no tool for approving the remote agent's
