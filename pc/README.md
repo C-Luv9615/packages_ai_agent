@@ -93,11 +93,26 @@ python3 pc/test_mcp.py                       # 需先起 server（见脚本头�
 - 编译产物留在 PC 的 `out/openvela_vela_<target>/`，设备端只读状态文本。
 - `log_tail` 截 2.5 KB，若需完整日志直接看 `--log-dir` 下的 `vela_build_<target>_<时间戳>.log`。
 
-## BK7258 板上 media 框架可行性（spike 结论）
+## BK7258 板上 media 框架可行性（spike 实测，结论 no-go）
 
-见 `agent_skills/vela-build.md` 所在仓库的提交说明 / 团队文档：板侧
-`/dev/audio/pcm0p`、`pcm0c` 是标准 NuttX audio lower-half（media graph 经
-aw-alsa-lib 消费的正是这类设备），但 media 音频路由依赖 mediad + ffmpeg
-filter graph（alsasrc/alsasink）；BK7258 AP 为 336 KB RAM 的 ARMv8-M 核、
-无 PSRAM，ffmpeg 不可行。板上音频维持 NuttX audio 框架，media 框架链路由
-qemu（goldfish，media-only 播放+采集）承载。
+2026-09-20 实测（ap defconfig 加 `CONFIG_MEDIA=y CONFIG_MEDIA_SERVER=y`
+（含 `NET/NET_LOCAL/EVENT_FD` 依赖）→ full_flow 构建）：
+
+- **基线**：AP `app1.bin` 336,852 B（XIP 分区 2.78 MB，余 2.58 MB），RAM
+  336 KB 仅驻留 data+bss 12.5 KB；工具链 armv8-m.main / cortex-m33 soft-float。
+- **`CONFIG_MEDIA_SERVER=y` 构建失败**：`server/media_plugin.c:3` 无条件
+  `#include <libavutil/mem.h>`（`av_mallocz/av_freep` 是所有 plugin 的私数据
+  分配路径）；`audio_graph.c`/`media_player.c`/`media_recorder.c` 同样直接
+  依赖 libav*。本树无 ARMv8-M ffmpeg（prebuilts 只有 A64/x86），移植亦受
+  2.78 MB XIP 分区与 M33 soft-float 限制 —— **media server 本身编不过，
+  不是体积问题**。
+- **退到 `CONFIG_MEDIA=y`（仅 client 库）也失败**：`utils/media_utils.c:25`
+  `#include <cutils/properties.h>` —— client 依赖 Android 风格 property 服务
+  基础设施，AP 镜像没有；且无 server 时 client 编过也是死代码
+  （`media_player_open` 连不上 → audio_playback 回退 NUTTX direct）。
+- **结论 no-go**：板侧 `/dev/audio/pcm0p`、`pcm0c` 是标准 NuttX audio
+  lower-half（media graph 经 aw-alsa-lib 消费的正是这类设备），但 mediad +
+  ffmpeg filter graph（alsasrc/alsasink）需要 A 核/PSRAM 级资源。板上音频
+  维持 NuttX audio 框架；media 框架链路由 qemu（goldfish，media-only
+  播放+采集）承载。
+- defconfig 已还原，复原构建 `decode pass`，镜像与基线逐字节一致。
