@@ -32,6 +32,7 @@
 static const char* TAG = "netmgr";
 
 static char s_ip_str[INET_ADDRSTRLEN] = "0.0.0.0";
+static char s_last_ip_str[INET_ADDRSTRLEN] = "";
 
 bool network_is_connected(void)
 {
@@ -55,8 +56,16 @@ bool network_is_connected(void)
                 continue;
 
             inet_ntop(AF_INET, &sin->sin_addr, s_ip_str, sizeof(s_ip_str));
-            syslog(LOG_INFO, "[%s] Found iface %s addr %s\n", TAG,
-                ifa->ifa_name ? ifa->ifa_name : "?", s_ip_str);
+            /* Log only when the address changes; the poll thread calls
+             * this every few seconds and per-poll INFO spam floods the
+             * serial console (and has triggered the known serial.c
+             * assert on large stdout writes on at least one target). */
+            if (strncmp(s_ip_str, s_last_ip_str, sizeof(s_ip_str)) != 0)
+              {
+                strlcpy(s_last_ip_str, s_ip_str, sizeof(s_last_ip_str));
+                syslog(LOG_INFO, "[%s] Found iface %s addr %s\n", TAG,
+                    ifa->ifa_name ? ifa->ifa_name : "?", s_ip_str);
+              }
             freeifaddrs(ifa_list);
             return true;
         }
