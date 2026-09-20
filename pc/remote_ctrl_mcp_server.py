@@ -24,7 +24,11 @@ vela build design note: the device-side HTTP client times out a single
 request at ~120 s (AGENT_LLM_SOCKET_TIMEOUT_SEC), but a vela build takes
 35 s (incremental) to many minutes (clean).  So vela_build only STARTS the
 build in a background thread and returns immediately; the agent polls
-vela_build_status until state is success/failed.
+vela_build_status until state is success/failed.  vela_build_status
+accepts an optional wait (<=90 s) that holds the call while the build is
+running — the LLM cannot sleep between turns, so this is how it paces
+its polling; the running-state response is kept tiny (no log tail) so
+repeated polls cannot bloat the agent context.
 
 Safety guards:
   * ALLOWED_ROOT: every path must resolve INSIDE the workspace root.
@@ -351,6 +355,25 @@ def _log_tail(path, limit=LOG_TAIL_CHARS):
 
 
 def tool_vela_build_status(args):
+    # Optional server-side wait: while the build is running, hold the
+    # request (polling every second) until the state changes or `wait`
+    # seconds pass. The agent-side LLM cannot sleep between turns, so
+    # without this it fires status calls back-to-back and bloats its own
+    # context with repeated log tails. Keep wait <= 90 s: the device-side
+    # HTTP client times out a read at ~120 s.
+    try:
+        wait = int(args.get("wait", 0))
+    except (TypeError, ValueError):
+        wait = 0
+    wait = max(0, min(wait, 90))
+    if wait > 0:
+        deadline = time.monotonic() + wait
+        while time.monotonic() < deadline:
+            with VELA_LOCK:
+                if VELA["state"] != "running":
+                    break   # idle or terminal: waiting is pointless
+            time.sleep(1)
+
     with VELA_LOCK:
         state = VELA["state"]
         target = VELA["target"]
@@ -366,7 +389,11 @@ def tool_vela_build_status(args):
     lines = ["state: %s" % state, "target: %s" % target,
              "elapsed: %ds" % elapsed]
     if state == "running":
-        lines.append("still building — poll again in 30-60 s")
+        # Keep the running response tiny: the agent re-asks this every
+        # wait-interval, and a full log tail per call is what blew up its
+        # context. The log matters for diagnosing a failure, not progress.
+        lines.append("still building — call again with {\"wait\": 60}")
+        return "\n".join(lines)
     if state == "success":
         out_dir = _vela_out_dir(target)
         arts = []
@@ -378,10 +405,10 @@ def tool_vela_build_status(args):
                                        "out dir: %s" % out_dir))
     if state == "failed":
         lines.append("return code: %d" % rc)
-    if log_path:
-        lines.append("log: %s" % log_path)
-        lines.append("log_tail:")
-        lines.append(_log_tail(log_path))
+        if log_path:
+            lines.append("log: %s" % log_path)
+            lines.append("log_tail:")
+            lines.append(_log_tail(log_path))
     return _clip("\n".join(lines))
 
 
@@ -477,10 +504,19 @@ TOOLS = [
     {
         "handler": tool_vela_build_status,
         "name": "vela_build_status",
-        "description": ("Poll the vela build started by vela_build: "
-                        "state idle|running|success|failed, target, elapsed, "
-                        "log_tail (last ~2.5 KB) and artifact presence."),
-        "inputSchema": {"type": "object", "properties": {}},
+        "description": ("Poll the vela build started by vela_build. Pass "
+                        "{\"wait\": 60} to hold the call until the state "
+                        "changes (up to 90 s) instead of re-asking in a tight "
+                        "loop. Returns state idle|running|success|failed, "
+                        "target, elapsed; log_tail (last ~2.5 KB) and return "
+                        "code on failure; artifact presence on success."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "wait": {"type": "integer",
+                         "description": "seconds to hold while running (0-90)"},
+            },
+        },
     },
 ]
 

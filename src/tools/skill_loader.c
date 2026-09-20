@@ -207,16 +207,16 @@ static const char *TAG = "skills";
     "1. mcp_status - check a server named 'pc' is connected. If missing (first use only, persisted):\n" \
     "   run_shell \"mcp_add pc http://10.0.2.2:8760/mcp\" then run_shell \"mcp_discover\"\n" \
     "2. pc.vela_build {\"target\": \"goldfish-arm64-v8a-ap\", \"clean\": false} - starts the build on the PC and returns immediately. Do NOT wait for the build in this call (a single HTTP request times out at 120 s).\n" \
-    "3. pc.vela_build_status {} - poll every 30-60 s:\n" \
-    "   - state running: wait and poll again, may report progress to user\n" \
+    "3. pc.vela_build_status {\"wait\": 60} - the wait holds the call up to 60 s while the build runs; repeat until terminal:\n" \
+    "   - state running: call vela_build_status {\"wait\": 60} again, never poll in a tight loop\n" \
     "   - state success: report artifact (vela_ap.bin + size) and elapsed time\n" \
-    "   - state failed: report the error lines from log_tail\n\n" \
+    "   - state failed: report the error lines from log_tail (only failures include it)\n\n" \
     "## Limits\n" \
     "- Only one build at a time on the PC\n" \
     "- Build output stays on the PC under out/openvela_vela_<target>/\n\n" \
     "## Example\n" \
     "User: 帮我编译一下固件\n" \
-    "-> mcp_status -> pc.vela_build -> pc.vela_build_status (poll) -> 编译成功：vela_ap.bin 12.3 MB，耗时 35 秒\n"
+    "-> mcp_status -> pc.vela_build -> pc.vela_build_status {\"wait\": 60} (repeat) -> 编译成功：vela_ap.bin 12.3 MB，耗时 35 秒\n"
 
 /* Built-in skill registry */
 typedef struct {

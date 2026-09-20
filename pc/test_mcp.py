@@ -207,26 +207,36 @@ def run_tests(c, full=True):
     out = c.call("vela_build", {"target": "fake-ap"})
     check("concurrent rejected", "ERROR" in out and "already running" in out, out)
 
-    print("\n=== vela_build_status: poll to success ===")
-    state, out = poll_terminal(c, timeout=30)
+    print("\n=== vela_build_status: running reply is tiny (no log_tail) ===")
+    out = c.call("vela_build_status", {})
+    check("running one-liner", "state: running" in out and "log_tail" not in out, out)
+
+    print("\n=== vela_build_status {\"wait\": 60}: holds until terminal ===")
+    import time as _t
+    t0 = _t.time()
+    state, out = poll_terminal(c, timeout=30, wait=60)
     check("state=success", state == "success", out)
+    check("wait actually held (~2s fake build)",
+          1.0 <= (_t.time() - t0), "%.1fs" % (_t.time() - t0))
     check("artifact reported", "vela_ap.bin" in out, out)
-    check("log_tail has fake output", "build completed successfully" in out, out)
+    check("success has no log_tail (keep it small)",
+          "log_tail" not in out, out)
 
     print("\n=== vela_build fail-ap -> failed with log_tail ===")
     out = c.call("vela_build", {"target": "fail-ap"})
     check("fail-ap started", "started" in out, out)
-    state, out = poll_terminal(c, timeout=30)
+    state, out = poll_terminal(c, timeout=30, wait=60)
     check("state=failed", state == "failed", out)
     check("log_tail has error", "fake compile failure" in out, out)
 
 
-def poll_terminal(c, timeout=30):
-    """Poll vela_build_status until success/failed or timeout."""
+def poll_terminal(c, timeout=30, wait=0):
+    """Poll vela_build_status (optionally with server-side wait) until
+    success/failed or timeout."""
     deadline = time.time() + timeout
     out = ""
     while time.time() < deadline:
-        out = c.call("vela_build_status", {})
+        out = c.call("vela_build_status", {"wait": wait} if wait else {})
         for st in ("success", "failed"):
             if "state: %s" % st in out:
                 print("  %s" % out.splitlines()[0])

@@ -22,13 +22,17 @@ When user asks to:
 - Returns `started` immediately — do NOT wait for the build in this call.
   The build runs on the PC; a single HTTP request would time out at 120 s.
 
-### 3. Poll status
-- `pc.vela_build_status {}`
-- `state: running` → wait 30–60 s, poll again (may report progress to user)
+### 3. Poll status (with server-side wait)
+- `pc.vela_build_status {"wait": 60}`
+- `wait` holds the call up to 60 s while the build runs, then returns the
+  current state — repeat until terminal. Never poll in a tight loop: the
+  running-state reply is small, but each round trip costs an LLM turn.
+- `state: running` → call `vela_build_status {"wait": 60}` again
 - `state: success` → report artifact (e.g. vela_ap.bin + size) and elapsed time
 - `state: failed` → report the error lines from `log_tail`
 
-The PC keeps the full log; `log_tail` carries only the last ~2.5 KB.
+The PC keeps the full log; `log_tail` (last ~2.5 KB) is only included on
+failure — the running-state reply is a one-liner by design.
 
 ## Limits
 - Only one build at a time on the PC (a second `vela_build` while running is rejected)
@@ -38,7 +42,7 @@ The PC keeps the full log; `log_tail` carries only the last ~2.5 KB.
 User: "帮我编译一下固件"
 → mcp_status
 → pc.vela_build {"target": "goldfish-arm64-v8a-ap"}
-→ pc.vela_build_status {} (poll every 30–60 s)
+→ pc.vela_build_status {"wait": 60} (repeat until terminal)
 → "编译成功：vela_ap.bin 12.3 MB，耗时 35 秒"
 
 User: "编译失败了吗"

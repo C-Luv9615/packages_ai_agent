@@ -56,9 +56,14 @@ ai_agent                    PC server
    │  …每 30–60 s 轮询…        │
 ```
 
-`vela_build_status` 返回 `state`（idle|running|success|failed）、`target`、
-`elapsed`、`log_tail`（末 ~2.5 KB，失败时定位错误行）、成功时的 artifact
-（`out/openvela_vela_<target>/vela_ap.bin` 等）。
+`vela_build_status` 返回 `state`（idle|running|success|failed）、`target`、`elapsed`；
+失败时附 `return code` 与 `log_tail`（末 ~2.5 KB，定位错误行），成功时附 artifact
+（`out/openvela_vela_<target>/vela_ap.bin` 等）。running 态回复保持一行（不带
+log_tail）——agent 反复轮询时不会撑爆自身上下文。
+
+`vela_build_status {"wait": 60}`：server 端阻塞最长 90 s（须低于设备 120 s 读超时），
+state 离开 running 即刻返回。LLM 自己无法在轮次间等待，`wait` 是它控制轮询节奏的
+唯一手段——skill 里就是这么教的。
 
 ## 安全模型
 
