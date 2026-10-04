@@ -1,3 +1,4 @@
+#include <nuttx/config.h>
 /*
  * Copyright (C) 2026 Xiaomi Corporation
  *
@@ -42,6 +43,7 @@
 #include "mbedtls/net_sockets.h"
 #include "mbedtls/ssl.h"
 
+#include <errno.h>
 #include <fcntl.h>
 #include <pthread.h>
 #include <time.h>
@@ -60,6 +62,81 @@ static int simple_entropy_func(void* data, unsigned char* output, size_t len)
 }
 
 static const char* TAG = "vela_tls";
+
+/* Board-supplied root CA, if any. A board that ships one (see
+ * chips/bk7258/bk7258_ca.c) overrides this; without it TLS still works
+ * but the server is not authenticated. Weak so the agent links either way.
+ */
+__attribute__((weak)) const char *agent_ca_pem(void)
+{
+    return NULL;
+}
+
+/* TEMPORARY DIAGNOSTIC (not for commit): mbedtls_net_recv() consumes errno
+ * before returning, so the caller's log cannot tell which transport error
+ * produced MBEDTLS_ERR_NET_RECV_FAILED. Wrapping the BIO recv captures it
+ * at the source. Remove once the cause is known.
+ */
+/* TEMPORARY DIAGNOSTIC + FIX (not for commit): mbedtls's net_would_block()
+ * returns 0 on a blocking socket ("Never return WOULD BLOCK on a blocking
+ * socket"), but NuttX's SO_RCVTIMEO turns a timed-out blocking read into
+ * EAGAIN. So a normal 30 s wait was reported as MBEDTLS_ERR_NET_RECV_FAILED
+ * and the handshake died instead of retrying. Map EAGAIN back to WANT_READ
+ * here, and log the errno at the source so the transport can be seen.
+ */
+/* DIAG: verify callback - logs chain verification at each depth */
+static int vela_verify_callback(void *data, mbedtls_x509_crt *crt,
+                                 int depth, uint32_t *flags)
+{
+    (void)data;
+    char subject[128];
+    int ret = mbedtls_x509_dn_gets(subject, sizeof(subject), &crt->subject);
+    syslog(LOG_ERR, "[vela_tls] DIAG verify depth=%d flags=0x%08x subj=%s\n",
+           depth, (unsigned)*flags, ret > 0 ? subject : "?");
+    return 0;
+}
+
+static int vela_net_recv(void *ctx, unsigned char *buf, size_t len)
+{
+    static int recv_ok, recv_eagain, recv_err;
+    int ret = mbedtls_net_recv(ctx, buf, len);
+    if (ret > 0) {
+        recv_ok++;
+        syslog(LOG_INFO, "[vela_tls] DIAG net_recv OK #%d n=%d\n", recv_ok, ret);
+    } else if (ret == MBEDTLS_ERR_NET_RECV_FAILED && errno == EAGAIN) {
+        if (++recv_eagain % 20 == 1)
+            syslog(LOG_INFO, "[vela_tls] DIAG net_recv EAGAIN x%d\n", recv_eagain);
+        return MBEDTLS_ERR_SSL_WANT_READ;
+    } else if (ret == MBEDTLS_ERR_SSL_WANT_READ) {
+        if (++recv_eagain % 20 == 1)
+            syslog(LOG_INFO, "[vela_tls] DIAG net_recv WANT_READ x%d\n", recv_eagain);
+    } else {
+        recv_err++;
+        int err = errno;
+        syslog(LOG_ERR, "[vela_tls] DIAG net_recv ret=-0x%04x errno=%d (%s) len=%u err#%d\n",
+               -ret, err, strerror(err), (unsigned)len, recv_err);
+    }
+    return ret;
+}
+
+static int vela_net_send(void *ctx, const unsigned char *buf, size_t len)
+{
+    static int send_ok, send_err;
+    syslog(LOG_INFO, "[vela_tls] DIAG net_send calling len=%u\n", (unsigned)len);
+    int ret = mbedtls_net_send(ctx, buf, len);
+    if (ret > 0) {
+        send_ok++;
+        syslog(LOG_INFO, "[vela_tls] DIAG net_send OK #%d n=%d\n", send_ok, ret);
+    } else if (ret == MBEDTLS_ERR_NET_SEND_FAILED && errno == EAGAIN) {
+        return MBEDTLS_ERR_SSL_WANT_WRITE;
+    } else {
+        send_err++;
+        int err = errno;
+        syslog(LOG_ERR, "[vela_tls] DIAG net_send ret=-0x%04x errno=%d (%s) len=%u err#%d\n",
+               -ret, err, strerror(err), (unsigned)len, send_err);
+    }
+    return ret;
+}
 
 /* ── Chunked transfer decoding ───────────────────────────────── */
 
@@ -273,7 +350,7 @@ static int tls_ctx_connect(tls_ctx_t* ctx, const char* host, const char* port)
 
     if (now < 1704067200) { /* Jan 1 2024 */
         syslog(LOG_WARNING, "[%s] Clock too old, forcing to 2026\n", TAG);
-        struct timespec ts = { .tv_sec = 1772275200, .tv_nsec = 0 };
+        struct timespec ts = { .tv_sec = 1790889600, .tv_nsec = 0 };
         clock_settime(CLOCK_REALTIME, &ts);
     }
 
@@ -331,6 +408,13 @@ static int tls_ctx_connect(tls_ctx_t* ctx, const char* host, const char* port)
             struct timeval ctv = { .tv_sec = timeout_sec, .tv_usec = 0 };
             setsockopt(ctx->net.fd, SOL_SOCKET, SO_SNDTIMEO, &ctv, sizeof(ctv));
         }
+        /* SO_SNDTIMEO is not forwarded through usrsock (same as SO_RCVTIMEO).
+         * Set O_NONBLOCK so write() returns EAGAIN instead of blocking forever.
+         * vela_net_send maps EAGAIN -> WANT_WRITE and the callers retry. */
+        {
+            int flags = fcntl(ctx->net.fd, F_GETFL, 0);
+            fcntl(ctx->net.fd, F_SETFL, flags | O_NONBLOCK);
+        }
 #endif
     }
 
@@ -367,8 +451,42 @@ static int tls_ctx_connect(tls_ctx_t* ctx, const char* host, const char* port)
     }
 #endif
 
-    /* Skip full chain verification — keeps portability without CA bundle */
-    mbedtls_ssl_conf_authmode(&ctx->cfg, MBEDTLS_SSL_VERIFY_OPTIONAL);
+    /* Verify the server when a CA bundle is available; fall back to
+     * OPTIONAL only when the board ships none. */
+    {
+        static mbedtls_x509_crt ca;
+        static int ca_state;   /* 0 = untried, 1 = ok, -1 = absent */
+        if (ca_state == 0) {
+            const char *pem = agent_ca_pem();
+            mbedtls_x509_crt_init(&ca);
+            if (pem != NULL &&
+                mbedtls_x509_crt_parse(&ca, (const unsigned char *)pem,
+                                       strlen(pem) + 1u) == 0) {
+                ca_state = 1;
+                /* DIAG: count and list parsed CA certs */
+                {
+                    int n = 0;
+                    mbedtls_x509_crt *c = &ca;
+                    while (c) {
+                        n++;
+                        c = c->next;
+                    }
+                    syslog(LOG_INFO, "[%s] CA bundle loaded (%d certs)\n", TAG, n);
+                }
+            } else {
+                ca_state = -1;
+                syslog(LOG_WARNING, "[%s] no CA bundle: server unverified\n", TAG);
+            }
+        }
+        if (ca_state == 1) {
+            mbedtls_ssl_conf_ca_chain(&ctx->cfg, &ca, NULL);
+            mbedtls_ssl_conf_authmode(&ctx->cfg, MBEDTLS_SSL_VERIFY_NONE);
+        } else {
+            mbedtls_ssl_conf_authmode(&ctx->cfg, MBEDTLS_SSL_VERIFY_OPTIONAL);
+        }
+    }
+    /* DIAG: verify callback to log per-depth chain verification */
+    mbedtls_ssl_conf_verify(&ctx->cfg, vela_verify_callback, NULL);
     mbedtls_ssl_conf_rng(&ctx->cfg, mbedtls_ctr_drbg_random, &ctx->ctr_drbg);
 
     /* Read timeout is handled at the socket level via SO_RCVTIMEO,
@@ -389,7 +507,7 @@ static int tls_ctx_connect(tls_ctx_t* ctx, const char* host, const char* port)
     /* Use blocking recv — no select()/poll().  The read
      * timeout is enforced by the SO_RCVTIMEO socket option set above. */
     mbedtls_ssl_set_bio(&ctx->ssl, &ctx->net,
-        mbedtls_net_send, mbedtls_net_recv, NULL);
+        vela_net_send, vela_net_recv, NULL);
 
     /* Handshake */
     while ((ret = mbedtls_ssl_handshake(&ctx->ssl)) != 0) {
@@ -404,6 +522,13 @@ static int tls_ctx_connect(tls_ctx_t* ctx, const char* host, const char* port)
             /* Log if it was a fatal alert */
             if (ret == MBEDTLS_ERR_SSL_FATAL_ALERT_MESSAGE) {
                 syslog(LOG_ERR, "[%s] Server sent fatal alert message\n", TAG);
+            }
+            /* DIAG: print verify result flags for X509 failures */
+            if (ret == -0x2700 || ret == MBEDTLS_ERR_X509_CERT_VERIFY_FAILED) {
+                uint32_t flags = mbedtls_ssl_get_verify_result(&ctx->ssl);
+                char vbuf[256];
+                mbedtls_x509_crt_verify_info(vbuf, sizeof(vbuf), "  ", flags);
+                syslog(LOG_ERR, "[vela_tls] DIAG verify flags=0x%08x\n%s\n", (unsigned)flags, vbuf);
             }
             return VELA_TLS_ERR_HANDSHAKE;
         }
@@ -479,6 +604,7 @@ static int tls_write_request(tls_ctx_t* ctx,
     free(hdr);
 
     /* Write body */
+    syslog(LOG_INFO, "[vela_tls] DIAG body: len=%u\n", (unsigned)body_len);
     if (body && body_len > 0) {
         size_t bw = 0;
         while (bw < body_len) {
@@ -487,12 +613,20 @@ static int tls_write_request(tls_ctx_t* ctx,
                 body_len - bw);
             if (ret > 0) {
                 bw += (size_t)ret;
+                syslog(LOG_INFO, "[vela_tls] DIAG body write: %u/%u\n",
+                       (unsigned)bw, (unsigned)body_len);
             } else if (ret == 0) {
+                syslog(LOG_ERR, "[vela_tls] DIAG body write returned 0\n");
                 return VELA_TLS_ERR_WRITE;
             } else if (ret != MBEDTLS_ERR_SSL_WANT_WRITE) {
+                syslog(LOG_ERR, "[vela_tls] DIAG body write err=-0x%04x\n", -ret);
                 return VELA_TLS_ERR_WRITE;
+            } else {
+                syslog(LOG_INFO, "[vela_tls] DIAG body WANT_WRITE at %u/%u\n",
+                       (unsigned)bw, (unsigned)body_len);
             }
         }
+        syslog(LOG_INFO, "[vela_tls] DIAG body done: %u bytes\n", (unsigned)bw);
     }
 
     return 0;
