@@ -72,6 +72,9 @@ static bool g_mirror_turn;
 
 /* ── Event handler ─────────────────────────────────────────────────── */
 
+static void notify_observer_state(const char *text);
+static void notify_observer_reply(const char *text);
+
 /* Invoked by the session with its lock held: keep this cheap and never call
  * back into remote_session_*. */
 static void on_session_event(void* context, enum remote_event_e event,
@@ -84,8 +87,39 @@ static void on_session_event(void* context, enum remote_event_e event,
         /* A status line and nothing else: what the agent is doing, never what it
          * said. The bridge holds to the same rule on its side, so this reports
          * "Agent working", a tool name, or "Agent replying" — the reply itself
-         * arrives as REMOTE_EVENT_TURN_TRANSCRIPT once the turn ends. */
-        syslog(LOG_INFO, "[%s] status: %s\n", TAG, text != NULL ? text : "");
+         * arrives as REMOTE_EVENT_TURN_TRANSCRIPT once the turn ends.
+         *
+         * The prefix is what makes the line readable. A bare tool name or a
+         * bare tool argument says nothing about which of those it is, and the
+         * approval line is the one a person must react to right now -- it
+         * names the key. */
+        {
+            const char *tag = "[状态]";
+            char body[160];
+
+            if (text != NULL && strncmp(text, "approval required: ", 19) == 0) {
+                tag = "[需要审批]";
+                snprintf(body, sizeof(body),
+                         "%s   ->  按 KEY1 批准 / KEY2 拒绝", text + 19);
+            } else if (text != NULL && strstr(text, "completed") != NULL) {
+                tag = "[工具]";
+                snprintf(body, sizeof(body), "%s", text);
+            } else if (text != NULL &&
+                       (strcmp(text, "Agent working") == 0 ||
+                        strcmp(text, "Agent replying") == 0)) {
+                tag = "[任务]";
+                snprintf(body, sizeof(body), "%s",
+                         strcmp(text, "Agent working") == 0 ? "进行中" : "回复中");
+            } else if (text != NULL && strncmp(text, "Agent turn", 10) == 0) {
+                tag = "[任务]";
+                snprintf(body, sizeof(body), "%s", text + 11);
+            } else {
+                snprintf(body, sizeof(body), "%s", text != NULL ? text : "");
+            }
+
+            syslog(LOG_INFO, "[%s] %s %s\n", TAG, tag, body);
+            notify_observer_state(text);
+        }
 #ifdef CONFIG_AI_AGENT_LVGL_UI
         /* A permission request parks the turn until a human decides, and the
          * console log line is easy to miss — surface it on the toast the
@@ -117,6 +151,7 @@ static void on_session_event(void* context, enum remote_event_e event,
          * board, so the raw stream writes straight through with no fixed buffer
          * to truncate against. */
         syslog(LOG_INFO, "[%s] reply:\n%s", TAG, text != NULL ? text : "");
+        notify_observer_reply(text);
         /* rask-initiated turns also ride the cli outbound branch so the reply
          * lands where an `ask` reply lands: console card, LVGL chat view and
          * the voice pipeline behind it. Cheap by design — one heap copy and a
@@ -374,6 +409,61 @@ int remote_ctrl_channel_decide(enum remote_decision_e decision)
     }
 
     return remote_session_decide(&g_session, decision) ? OK : ERROR;
+}
+
+/* The entry point handed to an input adapter.  It keeps the console
+ * feedback here so every source -- keys, a touch widget, a voice intent --
+ * reports the same way, and so the adapter never has to know about the
+ * channel's configuration or session state.
+ */
+static void remote_ctrl_decide_from_input(enum remote_decision_e decision,
+                                          void *ctx)
+{
+    (void)ctx;
+
+    if (remote_ctrl_channel_decide(decision) != OK) {
+        printf("No approvable request is pending (or one was already "
+               "answered).\n");
+        return;
+    }
+
+    printf(decision == REMOTE_DECISION_DENY ? "Denied.\n"
+                                            : "Approved once.\n");
+}
+
+int remote_ctrl_register_input(const struct remote_input_ops_s *ops)
+{
+    if (ops == NULL || ops->attach == NULL) {
+        return ERROR;
+    }
+
+    return ops->attach(remote_ctrl_decide_from_input, NULL);
+}
+
+static const struct remote_observer_ops_s *g_observer;
+
+int remote_ctrl_register_observer(const struct remote_observer_ops_s *ops)
+{
+    if (ops == NULL || ops->on_state == NULL) {
+        return ERROR;
+    }
+
+    g_observer = ops;
+    return OK;
+}
+
+static void notify_observer_state(const char *text)
+{
+    if (g_observer != NULL && g_observer->on_state != NULL) {
+        g_observer->on_state(text, g_observer->ctx);
+    }
+}
+
+static void notify_observer_reply(const char *text)
+{
+    if (g_observer != NULL && g_observer->on_reply != NULL) {
+        g_observer->on_reply(text, g_observer->ctx);
+    }
 }
 
 /* Turns a refused submit into something a person or a model can act on. The

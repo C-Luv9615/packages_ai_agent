@@ -103,6 +103,42 @@ int remote_ctrl_channel_select_model(const char* model);
  * would make the whole permission model decorative. */
 int remote_ctrl_channel_decide(enum remote_decision_e decision);
 
+/* Input-adapter plug point.
+ *
+ * What reaches decide() is a human decision, not a button press: a physical
+ * key map, a touch-screen widget and a voice intent parser are all adapters
+ * over the same vocabulary.  Each registers here and receives the decide
+ * entry point, so an adapter knows remote_decision_e and nothing else about
+ * remote_ctrl -- and remote_ctrl never learns what hardware the product
+ * has.  A product with a touch screen registers a different adapter and
+ * leaves the channel untouched.
+ */
+typedef void (*remote_decide_fn)(enum remote_decision_e decision, void *ctx);
+
+struct remote_input_ops_s
+{
+  const char *name;                       /* "keymap" / "touch" / "voice" */
+  int (*attach)(remote_decide_fn decide, void *ctx);
+  void (*detach)(void);
+};
+
+int remote_ctrl_register_input(const struct remote_input_ops_s *ops);
+
+/* Output-observer plug point, the mirror of the input one.
+ *
+ * A product shows progress with LEDs, a screen, a voice prompt or all
+ * three.  Each registers here and receives the same state vocabulary;
+ * remote_ctrl never learns which one the product has. */
+struct remote_observer_ops_s
+{
+  const char *name;                       /* "led" / "lvgl" / "voice" */
+  void (*on_state)(const char *text, void *ctx);
+  void (*on_reply)(const char *text, void *ctx);
+  void *ctx;
+};
+
+int remote_ctrl_register_observer(const struct remote_observer_ops_s *ops);
+
 #else /* stubs */
 
 static inline int remote_ctrl_channel_init(void) { return OK; }
