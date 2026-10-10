@@ -34,6 +34,7 @@
 #include "llm/llm_proxy.h"
 #ifdef CONFIG_AI_AGENT_MCP
 #include "tools/mcp_client.h"
+#include "cJSON.h"
 #endif
 #include "core/memory_store.h"
 #include "core/session_mgr.h"
@@ -822,12 +823,38 @@ static void cmd_mcp_status(void)
 static void cmd_mcp_tools(void)
 {
     char* json = mcp_client_get_tools_json();
-    if (json) {
+    if (!json) {
+        printf("No remote tools (run mcp_discover first)\n");
+        return;
+    }
+
+    /* One tool per line: the array is thousands of bytes of JSON and a
+     * single printf gets cut off by the serial console mid-object, which
+     * is exactly where the tool names live.
+     */
+
+    cJSON* arr = cJSON_Parse(json);
+    if (!arr || !cJSON_IsArray(arr)) {
         printf("%s\n", json);
         free(json);
-    } else {
-        printf("No remote tools (run mcp_discover first)\n");
+        return;
     }
+
+    cJSON* t = NULL;
+    int n = 0;
+    cJSON_ArrayForEach(t, arr)
+    {
+        cJSON* name = cJSON_GetObjectItem(t, "name");
+        cJSON* desc = cJSON_GetObjectItem(t, "description");
+        const char* d = (desc && cJSON_IsString(desc)) ? desc->valuestring : "";
+        printf("%2d  %-40s  %.60s\n", ++n,
+            (name && cJSON_IsString(name)) ? name->valuestring : "?",
+            d);
+    }
+
+    printf("(%d tools)\n", n);
+    cJSON_Delete(arr);
+    free(json);
 }
 #endif /* CONFIG_AI_AGENT_MCP */
 
@@ -1025,6 +1052,25 @@ static void* cli_thread(void* arg)
             fflush(stdout);
             pthread_mutex_unlock(&g_stdout_lock);
             continue;
+        }
+
+        /* syslog and this fgets() share one console, so a log line can land
+         * in the read buffer and get dispatched as a command (board:
+         * "Unknown command: [agent]").  Every logger here tags its lines
+         * "[something]", so anything that opens with '[' is noise, not a
+         * typed command -- drop it and re-prompt.
+         */
+
+        {
+            const char* q = line;
+            while (*q == ' ' || *q == '\t') q++;
+            if (*q == '[') {
+                pthread_mutex_lock(&g_stdout_lock);
+                printf("vela> ");
+                fflush(stdout);
+                pthread_mutex_unlock(&g_stdout_lock);
+                continue;
+            }
         }
 
         /* Free-text commands (ask/rask/memory_write/voice_test_speak) read

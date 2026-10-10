@@ -520,6 +520,15 @@ static int discover_server_tools(mcp_remote_server_t* srv,
         return -1;
     }
 
+    /* tools/list has been arriving as a well-formed 2xx body with no
+     * "tools" array (board: "discovered 0 tools").  One bounded line of the
+     * raw payload is the only way to tell a paginated empty result from an
+     * SSE frame the extractor dropped.
+     */
+
+    syslog(LOG_INFO, "[%s] %s tools/list HTTP %d, %u bytes: %.180s\n",
+        TAG, srv->name, status, (unsigned)strlen(resp_buf), resp_buf);
+
     cJSON* result = parse_jsonrpc_result(resp_buf);
     free(resp_buf);
     if (!result)

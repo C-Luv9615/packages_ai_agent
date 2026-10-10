@@ -72,68 +72,68 @@ __attribute__((weak)) const char *agent_ca_pem(void)
     return NULL;
 }
 
-/* TEMPORARY DIAGNOSTIC (not for commit): mbedtls_net_recv() consumes errno
- * before returning, so the caller's log cannot tell which transport error
- * produced MBEDTLS_ERR_NET_RECV_FAILED. Wrapping the BIO recv captures it
- * at the source. Remove once the cause is known.
+/* BIO wrappers.  The load-bearing part is the EAGAIN remap: mbedtls's
+ * net_would_block() returns 0 on a blocking socket ("Never return WOULD
+ * BLOCK on a blocking socket"), but NuttX's SO_RCVTIMEO turns a timed-out
+ * blocking read into EAGAIN.  Left alone, a normal 30 s wait is reported
+ * as MBEDTLS_ERR_NET_RECV_FAILED and the handshake dies instead of
+ * retrying.  Transport errors are logged at the source because
+ * mbedtls_net_recv() consumes errno before returning.
  */
-/* TEMPORARY DIAGNOSTIC + FIX (not for commit): mbedtls's net_would_block()
- * returns 0 on a blocking socket ("Never return WOULD BLOCK on a blocking
- * socket"), but NuttX's SO_RCVTIMEO turns a timed-out blocking read into
- * EAGAIN. So a normal 30 s wait was reported as MBEDTLS_ERR_NET_RECV_FAILED
- * and the handshake died instead of retrying. Map EAGAIN back to WANT_READ
- * here, and log the errno at the source so the transport can be seen.
+/* Chain verification runs through mbedtls's own path; this hook exists so
+ * a future X509 failure can be inspected at the depth it happened.  Silent
+ * on success -- per-depth logging drowned the console and hid the caller.
  */
-/* DIAG: verify callback - logs chain verification at each depth */
+/* Teardown is not a transaction.  close_notify on a peer that already hung
+ * up is expected to fail (ENOTCONN), and its transport error is not news,
+ * so the net wrappers below stay quiet for the duration of tls_ctx_free().
+ */
+static int s_teardown;
+
 static int vela_verify_callback(void *data, mbedtls_x509_crt *crt,
                                  int depth, uint32_t *flags)
 {
     (void)data;
-    char subject[128];
-    int ret = mbedtls_x509_dn_gets(subject, sizeof(subject), &crt->subject);
-    syslog(LOG_ERR, "[vela_tls] DIAG verify depth=%d flags=0x%08x subj=%s\n",
-           depth, (unsigned)*flags, ret > 0 ? subject : "?");
+    (void)crt;
+    (void)depth;
+    (void)flags;
     return 0;
 }
 
 static int vela_net_recv(void *ctx, unsigned char *buf, size_t len)
 {
-    static int recv_ok, recv_eagain, recv_err;
     int ret = mbedtls_net_recv(ctx, buf, len);
     if (ret > 0) {
-        recv_ok++;
-        syslog(LOG_INFO, "[vela_tls] DIAG net_recv OK #%d n=%d\n", recv_ok, ret);
-    } else if (ret == MBEDTLS_ERR_NET_RECV_FAILED && errno == EAGAIN) {
-        if (++recv_eagain % 20 == 1)
-            syslog(LOG_INFO, "[vela_tls] DIAG net_recv EAGAIN x%d\n", recv_eagain);
+        return ret;
+    }
+
+    if (ret == MBEDTLS_ERR_NET_RECV_FAILED && errno == EAGAIN) {
         return MBEDTLS_ERR_SSL_WANT_READ;
-    } else if (ret == MBEDTLS_ERR_SSL_WANT_READ) {
-        if (++recv_eagain % 20 == 1)
-            syslog(LOG_INFO, "[vela_tls] DIAG net_recv WANT_READ x%d\n", recv_eagain);
-    } else {
-        recv_err++;
+    }
+
+    if (ret != MBEDTLS_ERR_SSL_WANT_READ && !s_teardown) {
         int err = errno;
-        syslog(LOG_ERR, "[vela_tls] DIAG net_recv ret=-0x%04x errno=%d (%s) len=%u err#%d\n",
-               -ret, err, strerror(err), (unsigned)len, recv_err);
+        syslog(LOG_ERR, "[vela_tls] net_recv ret=-0x%04x errno=%d (%s) len=%u\n",
+               -ret, err, strerror(err), (unsigned)len);
     }
     return ret;
 }
 
 static int vela_net_send(void *ctx, const unsigned char *buf, size_t len)
 {
-    static int send_ok, send_err;
-    syslog(LOG_INFO, "[vela_tls] DIAG net_send calling len=%u\n", (unsigned)len);
     int ret = mbedtls_net_send(ctx, buf, len);
     if (ret > 0) {
-        send_ok++;
-        syslog(LOG_INFO, "[vela_tls] DIAG net_send OK #%d n=%d\n", send_ok, ret);
-    } else if (ret == MBEDTLS_ERR_NET_SEND_FAILED && errno == EAGAIN) {
+        return ret;
+    }
+
+    if (ret == MBEDTLS_ERR_NET_SEND_FAILED && errno == EAGAIN) {
         return MBEDTLS_ERR_SSL_WANT_WRITE;
-    } else {
-        send_err++;
+    }
+
+    if (!s_teardown) {
         int err = errno;
-        syslog(LOG_ERR, "[vela_tls] DIAG net_send ret=-0x%04x errno=%d (%s) len=%u err#%d\n",
-               -ret, err, strerror(err), (unsigned)len, send_err);
+        syslog(LOG_ERR, "[vela_tls] net_send ret=-0x%04x errno=%d (%s) len=%u\n",
+               -ret, err, strerror(err), (unsigned)len);
     }
     return ret;
 }
@@ -219,8 +219,10 @@ typedef struct {
 
 static void tls_ctx_free(tls_ctx_t* ctx)
 {
+    s_teardown = 1;
     mbedtls_ssl_close_notify(&ctx->ssl);
     mbedtls_net_free(&ctx->net);
+    s_teardown = 0;
     mbedtls_ssl_free(&ctx->ssl);
     mbedtls_ssl_config_free(&ctx->cfg);
     mbedtls_ctr_drbg_free(&ctx->ctr_drbg);
@@ -463,7 +465,7 @@ static int tls_ctx_connect(tls_ctx_t* ctx, const char* host, const char* port)
                 mbedtls_x509_crt_parse(&ca, (const unsigned char *)pem,
                                        strlen(pem) + 1u) == 0) {
                 ca_state = 1;
-                /* DIAG: count and list parsed CA certs */
+                /* CA bundle accounting */
                 {
                     int n = 0;
                     mbedtls_x509_crt *c = &ca;
@@ -485,7 +487,7 @@ static int tls_ctx_connect(tls_ctx_t* ctx, const char* host, const char* port)
             mbedtls_ssl_conf_authmode(&ctx->cfg, MBEDTLS_SSL_VERIFY_OPTIONAL);
         }
     }
-    /* DIAG: verify callback to log per-depth chain verification */
+    /* verify hook; see vela_verify_callback */
     mbedtls_ssl_conf_verify(&ctx->cfg, vela_verify_callback, NULL);
     mbedtls_ssl_conf_rng(&ctx->cfg, mbedtls_ctr_drbg_random, &ctx->ctr_drbg);
 
@@ -523,12 +525,12 @@ static int tls_ctx_connect(tls_ctx_t* ctx, const char* host, const char* port)
             if (ret == MBEDTLS_ERR_SSL_FATAL_ALERT_MESSAGE) {
                 syslog(LOG_ERR, "[%s] Server sent fatal alert message\n", TAG);
             }
-            /* DIAG: print verify result flags for X509 failures */
+            /* X509 failure detail */
             if (ret == -0x2700 || ret == MBEDTLS_ERR_X509_CERT_VERIFY_FAILED) {
                 uint32_t flags = mbedtls_ssl_get_verify_result(&ctx->ssl);
                 char vbuf[256];
                 mbedtls_x509_crt_verify_info(vbuf, sizeof(vbuf), "  ", flags);
-                syslog(LOG_ERR, "[vela_tls] DIAG verify flags=0x%08x\n%s\n", (unsigned)flags, vbuf);
+                syslog(LOG_ERR, "[vela_tls] verify flags=0x%08x\n%s\n", (unsigned)flags, vbuf);
             }
             return VELA_TLS_ERR_HANDSHAKE;
         }
@@ -604,7 +606,6 @@ static int tls_write_request(tls_ctx_t* ctx,
     free(hdr);
 
     /* Write body */
-    syslog(LOG_INFO, "[vela_tls] DIAG body: len=%u\n", (unsigned)body_len);
     if (body && body_len > 0) {
         size_t bw = 0;
         while (bw < body_len) {
@@ -613,20 +614,14 @@ static int tls_write_request(tls_ctx_t* ctx,
                 body_len - bw);
             if (ret > 0) {
                 bw += (size_t)ret;
-                syslog(LOG_INFO, "[vela_tls] DIAG body write: %u/%u\n",
-                       (unsigned)bw, (unsigned)body_len);
             } else if (ret == 0) {
-                syslog(LOG_ERR, "[vela_tls] DIAG body write returned 0\n");
+                syslog(LOG_ERR, "[vela_tls] body write returned 0\n");
                 return VELA_TLS_ERR_WRITE;
             } else if (ret != MBEDTLS_ERR_SSL_WANT_WRITE) {
-                syslog(LOG_ERR, "[vela_tls] DIAG body write err=-0x%04x\n", -ret);
+                syslog(LOG_ERR, "[vela_tls] body write err=-0x%04x\n", -ret);
                 return VELA_TLS_ERR_WRITE;
-            } else {
-                syslog(LOG_INFO, "[vela_tls] DIAG body WANT_WRITE at %u/%u\n",
-                       (unsigned)bw, (unsigned)body_len);
             }
         }
-        syslog(LOG_INFO, "[vela_tls] DIAG body done: %u bytes\n", (unsigned)bw);
     }
 
     return 0;
