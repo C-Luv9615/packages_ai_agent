@@ -25,6 +25,27 @@ extern "C" {
 /* Initialize voice channel (load config keys). */
 int voice_channel_init(void);
 
+/* Where a recognized utterance goes.
+ *
+ * The built-in consumer is the chat bus (the on-device agent).  A product
+ * that wants the text somewhere else -- a remote-control channel, a home
+ * automation bridge -- registers a sink and becomes that destination.
+ * Registration is exclusive: a sink replaces the chat bus rather than
+ * adding to it, so one utterance has exactly one owner.  voice_channel
+ * never learns who is listening; the dependency points at it, never from
+ * it.  With no sink registered behaviour is unchanged, so boards that do
+ * not use the consumer keep working.
+ */
+typedef void (*voice_text_sink_t)(const char *text, void *ctx);
+int voice_channel_register_sink(voice_text_sink_t fn, void *ctx);
+
+/* Hand one recognized utterance to the current destination (the sink if one
+ * is registered, the chat bus otherwise).  Callers that already hold the ASR
+ * text -- a PTT button handler, a console command -- route through here so
+ * the destination stays in one place.
+ */
+void voice_channel_dispatch(const char *text);
+
 /* Start voice recording, ASR, then push text to agent via message_bus. */
 int voice_channel_start(void);
 

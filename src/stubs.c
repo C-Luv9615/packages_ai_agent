@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+#include "voice/voice_channel.h"
 #include <nuttx/config.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -38,17 +39,41 @@ __attribute__((weak)) void arm_netinitialize(void) { }
 __attribute__((weak)) int voice_channel_init(void) { return 0; }
 __attribute__((weak)) int voice_channel_start(void) { return -1; }
 __attribute__((weak)) int voice_channel_stop(void) { return 0; }
+__attribute__((weak)) int voice_channel_register_sink(
+    voice_text_sink_t fn, void* ctx)
+{
+    (void)fn;
+    (void)ctx;
+    return -1;
+}
+__attribute__((weak)) void voice_channel_dispatch(const char* text)
+{
+    (void)text;
+}
 __attribute__((weak)) int voice_channel_speak(const char* text)
 {
     (void)text;
     return -1;
 }
-__attribute__((weak)) int voice_channel_test_tts(const char* text)
+__attribute__((weak)) int voice_channel_test_tts(const char* text,
+    const char* out_path)
 {
     (void)text;
+    (void)out_path;
     return -1;
 }
-__attribute__((weak)) int voice_channel_test_asr(void) { return -1; }
+__attribute__((weak)) int voice_channel_test_asr(const char* pcm_path)
+{
+    (void)pcm_path;
+    return -1;
+}
+__attribute__((weak)) int voice_channel_stop_with_text(char* text_out,
+    size_t text_cap)
+{
+    (void)text_out;
+    (void)text_cap;
+    return -1;
+}
 __attribute__((weak)) const char* voice_tts_get_backend(void) { return "none"; }
 __attribute__((weak)) int voice_tts_set_backend(const char* name)
 {

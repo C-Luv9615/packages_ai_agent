@@ -22,6 +22,7 @@
 #include "core/message_bus.h"
 #include "infra/config_store.h"
 #include "remote/remote_link_mqtt.h"
+#include "voice/voice_channel.h"
 
 #ifdef CONFIG_AI_AGENT_LVGL_UI
 #include "ui/lvgl_toast.h"
@@ -315,6 +316,31 @@ int remote_ctrl_channel_init(void)
     return OK;
 }
 
+/* Voice is a control input to this channel, not a chat message: an
+ * utterance from a PTT button is an instruction for the remote agent, the
+ * same thing `rask` sends.  Deliberately remote_ctrl_channel_submit() and
+ * not decide() -- the voice path never produces a permission decision, it
+ * produces a prompt that later demands one, so the "a permission decision
+ * is a human typing ronce/rdeny" rule stays intact and no keyword table or
+ * intent classifier is needed.
+ */
+
+static void voice_sink_to_remote(const char* text, void* ctx)
+{
+    char reply[256];
+
+    (void)ctx;
+
+    /* Non-blocking for the same reason `rask` is: a turn that stops for a
+     * remote permission request has to leave the console and the button
+     * adapter free to answer it.
+     */
+
+    if (remote_ctrl_channel_submit(text, reply, sizeof(reply)) != OK) {
+        syslog(LOG_ERR, "[%s] voice submit: %s\n", TAG, reply);
+    }
+}
+
 int remote_ctrl_channel_start(void)
 {
     int ret;
@@ -335,7 +361,14 @@ int remote_ctrl_channel_start(void)
     }
 
     g_started = true;
-    syslog(LOG_INFO, "[%s] started\n", TAG);
+
+    /* Registering here, not in init(), is what keeps this optional: an
+     * unconfigured channel never claims the voice text, so a board that
+     * only wants voice chat keeps the chat-bus default untouched.
+     */
+
+    voice_channel_register_sink(voice_sink_to_remote, NULL);
+    syslog(LOG_INFO, "[%s] started (voice sink registered)\n", TAG);
     return OK;
 }
 

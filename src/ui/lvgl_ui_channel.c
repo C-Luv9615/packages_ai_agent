@@ -1058,32 +1058,13 @@ static void ptt_btn_event_cb(lv_event_t* e)
             goto done;
         }
 
-        /* Construct inbound message with channel="lvgl_ui" */
-        agent_msg_t msg;
+        /* Route through the single dispatch point so the destination stays
+         * out of this file: with no sink registered the utterance goes to the
+         * chat bus exactly as before, and a product that registered one owns
+         * it instead.  This file must not learn which consumer exists.
+         */
 
-        memset(&msg, 0, sizeof(msg));
-        strncpy(msg.channel, AGENT_CHAN_LVGL_UI,
-            sizeof(msg.channel) - 1);
-        msg.channel[sizeof(msg.channel) - 1] = '\0';
-        strncpy(msg.chat_id, "lvgl_ui",
-            sizeof(msg.chat_id) - 1);
-        msg.chat_id[sizeof(msg.chat_id) - 1] = '\0';
-
-        msg.content = strdup(asr_text);
-        if (!msg.content) {
-            syslog(LOG_ERR, "[%s] strdup failed\n", TAG);
-            goto done;
-        }
-
-        if (message_bus_push_inbound(&msg) != 0) {
-            syslog(LOG_ERR,
-                "[%s] message_bus_push_inbound failed\n", TAG);
-            free(msg.content);
-            msg.content = NULL;
-            chat_view_add_message("发送失败", false);
-            goto done;
-        }
-
+        voice_channel_dispatch(asr_text);
         chat_view_add_message(asr_text, true);
 
     done:

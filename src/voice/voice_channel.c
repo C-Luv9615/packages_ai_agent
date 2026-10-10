@@ -513,6 +513,52 @@ static void* recording_thread(void* arg)
 
 #define ASR_THREAD_STACK (24 * 1024)
 
+static voice_text_sink_t s_text_sink;
+static void* s_text_sink_ctx;
+
+int voice_channel_register_sink(voice_text_sink_t fn, void* ctx)
+{
+    pthread_mutex_lock(&s_voice.lock);
+    s_text_sink = fn;
+    s_text_sink_ctx = ctx;
+    pthread_mutex_unlock(&s_voice.lock);
+    return 0;
+}
+
+void voice_channel_dispatch(const char* text)
+{
+    voice_text_sink_t sink;
+    void* ctx;
+
+    if (!text || text[0] == '\0') {
+        return;
+    }
+
+    pthread_mutex_lock(&s_voice.lock);
+    sink = s_text_sink;
+    ctx = s_text_sink_ctx;
+    pthread_mutex_unlock(&s_voice.lock);
+
+    if (sink) {
+        sink(text, ctx);
+        return;
+    }
+
+    /* No consumer registered: the on-device agent over the chat bus. */
+
+    {
+        agent_msg_t msg;
+
+        memset(&msg, 0, sizeof(msg));
+        strncpy(msg.channel, AGENT_CHAN_VOICE, sizeof(msg.channel) - 1);
+        strncpy(msg.chat_id, "voice", sizeof(msg.chat_id) - 1);
+        msg.content = strdup(text);
+        if (msg.content) {
+            message_bus_push_inbound(&msg);
+        }
+    }
+}
+
 static void* asr_and_dispatch(void* arg)
 {
     unsigned char* pcm = (unsigned char*)arg;
@@ -533,17 +579,7 @@ static void* asr_and_dispatch(void* arg)
         syslog(LOG_INFO, "[%s] ASR result: %s\n", TAG, text);
         printf("ASR: %s\n", text);
 
-        agent_msg_t msg;
-
-        memset(&msg, 0, sizeof(msg));
-        strncpy(msg.channel, AGENT_CHAN_VOICE,
-            sizeof(msg.channel) - 1);
-        strncpy(msg.chat_id, "voice",
-            sizeof(msg.chat_id) - 1);
-        msg.content = strdup(text);
-        if (msg.content) {
-            message_bus_push_inbound(&msg);
-        }
+        voice_channel_dispatch(text);
     } else {
         syslog(LOG_WARNING, "[%s] ASR failed or empty: %d\n",
             TAG, ret);
