@@ -279,9 +279,19 @@ static bool check_interfaces(void)
         /* Also update the shared s_ip_str for network_get_ip() */
         inet_ntop(AF_INET, &sin->sin_addr, s_ip_str, sizeof(s_ip_str));
 
-        syslog(LOG_DEBUG, "[%s] Found iface %s addr %s\n", TAG,
-            ifa->ifa_name ? ifa->ifa_name : "?",
-            g_net_status.ip_addr);
+        /* Same guard as network_is_connected(): this runs from the iface
+         * poll thread every interval, so an unconditional log prints the
+         * same address for as long as the board is up.  Announce a change,
+         * not a heartbeat.
+         */
+
+        if (strncmp(s_ip_str, s_last_ip_str, sizeof(s_ip_str)) != 0)
+          {
+            strlcpy(s_last_ip_str, s_ip_str, sizeof(s_last_ip_str));
+            syslog(LOG_INFO, "[%s] Found iface %s addr %s\n", TAG,
+                ifa->ifa_name ? ifa->ifa_name : "?",
+                g_net_status.ip_addr);
+          }
 
         found = true;
         break;
