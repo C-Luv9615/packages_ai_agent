@@ -87,6 +87,7 @@ struct particle_s {
   int32_t x, y;          /* position, pixels */
   int32_t vx, vy;        /* velocity, q8 (256 = 1px/tick) */
   uint32_t lcg;          /* per-particle pseudo-noise state */
+  int32_t last_rx, last_ry;  /* last rendered top-left; skip set_pos if unchanged */
 };
 
 struct pf_state_s {
@@ -181,12 +182,24 @@ static void physics_step(void)
           p->y = nyp;
         }
 
-      /* Render. */
+      /* Render — only invalidate when the integer pixel position actually
+       * changes.  Particles move sub-pixel most ticks (q8 velocity), so an
+       * unconditional set_pos would invalidate 18 regions every 33 ms even
+       * when nothing visibly moved.  On flush paths that can't keep up
+       * (qemu goldfish headless fb) the constant re-invalidation starves the
+       * flush so the screen never reaches the framebuffer.  Skipping no-op
+       * moves collapses invalidations to only real pixel crossings. */
       lv_obj_t *o = s_pf.particles[i];
       if (o)
         {
-          lv_obj_set_pos(o, p->x - (PARTICLE_DIAM / 2),
-                            p->y - (PARTICLE_DIAM / 2));
+          int32_t rx = p->x - (PARTICLE_DIAM / 2);
+          int32_t ry = p->y - (PARTICLE_DIAM / 2);
+          if (rx != p->last_rx || ry != p->last_ry)
+            {
+              lv_obj_set_pos(o, rx, ry);
+              p->last_rx = rx;
+              p->last_ry = ry;
+            }
         }
     }
 
@@ -381,9 +394,11 @@ int particle_flow_view_init(void)
                                        0x4ade80, LV_OPA_COVER);
       if (s_pf.particles[i])
         {
-          lv_obj_set_pos(s_pf.particles[i],
-                         s_pf.p[i].x - (PARTICLE_DIAM / 2),
-                         s_pf.p[i].y - (PARTICLE_DIAM / 2));
+          int32_t prx = s_pf.p[i].x - (PARTICLE_DIAM / 2);
+          int32_t pry = s_pf.p[i].y - (PARTICLE_DIAM / 2);
+          lv_obj_set_pos(s_pf.particles[i], prx, pry);
+          s_pf.p[i].last_rx = prx;
+          s_pf.p[i].last_ry = pry;
         }
     }
 
