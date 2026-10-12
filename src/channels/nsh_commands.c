@@ -188,6 +188,7 @@ static void cmd_help(void)
 #endif
 #if defined(CONFIG_AI_AGENT_LVGL_UI) || defined(CONFIG_AI_AGENT_UI_RPMSG)
         "  show_chat            - Show chat UI on screen\n"
+        "  set_pet <0-5>        - Drive pet to a state (debug; 0=idle 1=listen 2=think 3=exec 4=wait 5=err)\n"
 #endif
 #ifdef CONFIG_AI_AGENT_NET_RPMSG
         "  net_diag [ping|http] <target>  Network diagnostics\n"
@@ -1271,6 +1272,11 @@ static void* cli_thread(void* arg)
 #if defined(CONFIG_AI_AGENT_LVGL_UI) || defined(CONFIG_AI_AGENT_UI_RPMSG)
         else if (strcmp(cmd, "show_chat") == 0)
             lvgl_ui_channel_show();
+        /* Debug: manually drive the pet status ring to a state (0..5) so each
+         * anim callback (breathe/spin/fill/blink/shake) can be verified without
+         * a network/LLM round-trip. pet_status_view.h: enum pet_state. */
+        else if (strcmp(cmd, "set_pet") == 0 && argc >= 2)
+            lvgl_ui_channel_set_pet_state(atoi(argv[1]));
 #endif
 #ifdef CONFIG_AI_AGENT_TEST
         else if (strcmp(cmd, "claw_test") == 0)
