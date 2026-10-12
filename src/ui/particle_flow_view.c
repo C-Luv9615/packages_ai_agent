@@ -255,6 +255,14 @@ static void show_async_cb(void *data)
   if (!s_pf.initialized || !s_pf.screen || s_pf.visible) return;
   s_pf.prev_screen = lv_screen_active();
   lv_screen_load(s_pf.screen);
+  /* Re-assert bg + force a synchronous refresh so the secondary (async-loaded)
+   * screen flushes immediately.  The boot/home pet screen is flushed during
+   * lvgl_ui_channel_init; a page-switched-in screen needs the explicit nudge
+   * or its first frame can be skipped by lazy flush paths. */
+  lv_obj_set_style_bg_color(s_pf.screen, lv_color_hex(0x1a1a2e), 0);
+  lv_obj_set_style_bg_opa(s_pf.screen, LV_OPA_COVER, 0);
+  lv_obj_invalidate(s_pf.screen);
+  lv_refr_now(lv_display_get_default());
   s_pf.visible = true;
   syslog(LOG_INFO, "[%s] particle screen shown\n", TAG);
 }
