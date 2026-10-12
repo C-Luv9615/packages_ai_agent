@@ -170,6 +170,18 @@ static int ui_rpmsg_server_rx(struct rpmsg_endpoint *ept, void *data,
         }
         break;
 
+      case UI_RPMSG_SET_PET_STATE:
+        {
+          /* Drive the pet status ring home screen (M7 差异化页) from the AP
+           * agent's lifecycle state.  No-op if PET_STATUS is off. */
+          if (m->payload_len < 1)
+            {
+              break;
+            }
+          (void)lvgl_ui_channel_set_pet_state((int)m->payload[0]);
+        }
+        break;
+
       case UI_RPMSG_TOAST:
         {
           if (m->payload_len < 2 * sizeof(uint32_t))

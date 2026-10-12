@@ -79,6 +79,12 @@ enum ui_rpmsg_op {
                              * recognized utterance: payload = UTF-8 text
                              * (len, not NUL-terminated), like SEND but
                              * is_user=true and no TTS. */
+    UI_RPMSG_SET_PET_STATE = 10, /* drive the CP-side pet status ring (M7 差异化
+                                  * 页) from the AP agent's lifecycle state.
+                                  * payload[0] = enum pet_state
+                                  * (0=idle,1=listening,2=thinking,
+                                  *  3=executing,4=waiting,5=error);
+                                  * payload_len = 1. */
 };
 
 /** Fixed wire format (packed, little-endian on both M-class cores). */
@@ -96,7 +102,9 @@ struct ui_rpmsg_msg {
      *             payload_len = 1.
      *   SEND_USER : payload = UTF-8 user utterance text (len, not NUL-term);
      *               like SEND but rendered as a user (right) bubble, no TTS.
-     *   INIT/START/STOP/SHOW: payload_len = 0.
+     *   SET_PET_STATE : payload[0] = pet state (0..5, see enum pet_state);
+ *                  payload_len = 1.
+ *   INIT/START/STOP/SHOW: payload_len = 0.
      */
     uint8_t  payload[UI_RPMSG_MAX_PAYLOAD];
 } __attribute__((packed));

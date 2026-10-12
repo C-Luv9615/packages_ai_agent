@@ -96,6 +96,12 @@ enum lvgl_ui_ptt_state {
  */
 int lvgl_ui_channel_set_ptt(int state);
 
+/* 宠物状态环的状态语义（M7 差异化页）。值与 pet_status_view.h 的 enum
+ * pet_state 一一对应；此处用 int 以免把 pet_status_view.h 拖进 AP/agent 的
+ * 公共包含路径。0=idle,1=listening,2=thinking,3=executing,4=waiting,
+ * 5=error。 */
+int lvgl_ui_channel_set_pet_state(int state);
+
 #ifdef __cplusplus
 }
 #endif

@@ -46,6 +46,14 @@ LV_FONT_DECLARE(lv_font_misans_16_cjk);
 #include <syslog.h>
 #include <unistd.h>
 
+#ifdef CONFIG_AI_AGENT_PET_STATUS
+#include "ui/pet_status_view.h"
+/* Idle time (ms) after the last chat message before yielding the foreground
+ * back to the pet status ring home screen.  Only active when PET_STATUS is on
+ * and the chat screen currently owns the foreground. */
+#define PET_IDLE_YIELD_MS  8000
+#endif
+
 /* ── Constants ────────────────────────────────────────────────── */
 
 static const char* TAG = "lvgl_ui";
@@ -278,6 +286,38 @@ static chat_msg_t* chat_history_add(chat_history_t* h, const char* text, bool is
 
 /* ── Public API stubs (filled in by later tasks) ──────────────── */
 
+#ifdef CONFIG_AI_AGENT_PET_STATUS
+/* Idle-yield support: when the pet status ring is enabled, the chat screen
+ * yields the foreground to the pet after PET_IDLE_YIELD_MS of message silence.
+ * All access is confined to the LVGL thread (init creates the timer; the send
+ * async cb resets the tick; the timer cb does the yield). */
+static lv_timer_t *s_pet_idle_timer = NULL;
+static uint32_t    s_pet_last_msg_tick = 0;
+
+static void pet_idle_timer_cb(lv_timer_t *t)
+{
+    (void)t;
+    if (!s_state.initialized || !s_state.screen_visible) return;
+    if (!pet_status_view_is_visible() &&
+        (lv_tick_get() - s_pet_last_msg_tick) >= PET_IDLE_YIELD_MS)
+      {
+        /* Yield: the chat screen stays alive but releases the foreground so
+         * the pet home screen shows.  Clearing screen_visible lets the next
+         * incoming message re-take the foreground via lvgl_ui_channel_show. */
+        s_state.screen_visible = false;
+        pet_status_view_show();
+        syslog(LOG_INFO, "[%s] idle → pet home screen\n", TAG);
+      }
+}
+
+static void pet_idle_reset(void)
+{
+    s_pet_last_msg_tick = lv_tick_get();
+}
+#else
+static void pet_idle_reset(void) {}
+#endif
+
 int lvgl_ui_channel_init(void)
 {
     int chat_h;
@@ -480,6 +520,20 @@ int lvgl_ui_channel_init(void)
 
     s_state.initialized = true;
     syslog(LOG_INFO, "[%s] init OK\n", TAG);
+
+#ifdef CONFIG_AI_AGENT_PET_STATUS
+    /* Build the pet status ring home screen (M7 差异化页).  It is NOT loaded
+     * here — cp_ui_main (or the AP via RPMsg) decides when to show it.  The
+     * idle-yield timer runs in the LVGL thread and only fires when the chat
+     * screen owns the foreground. */
+    (void)pet_status_view_init();
+    s_pet_idle_timer = lv_timer_create(pet_idle_timer_cb, 1000, NULL);
+    if (s_pet_idle_timer)
+      {
+        lv_timer_set_repeat_count(s_pet_idle_timer, -1);
+      }
+    pet_idle_reset();
+#endif
     return 0;
 
 cleanup:
@@ -850,17 +904,27 @@ static void set_ptt_async_cb(void* data)
         s_state.is_recording = true;
         s_state.is_processing = false;
         recording_indicator_start();
+#ifdef CONFIG_AI_AGENT_PET_STATUS
+        /* Mirror PTT onto the pet: a recording session reads as "listening". */
+        pet_status_view_set_state(PET_STATE_LISTENING);
+#endif
         break;
     case LVGL_UI_PTT_PROCESSING:
         s_state.is_recording = false;
         s_state.is_processing = true;
         recording_indicator_show_processing();
+#ifdef CONFIG_AI_AGENT_PET_STATUS
+        pet_status_view_set_state(PET_STATE_THINKING);
+#endif
         break;
     case LVGL_UI_PTT_IDLE:
     default:
         s_state.is_recording = false;
         s_state.is_processing = false;
         recording_indicator_stop();
+#ifdef CONFIG_AI_AGENT_PET_STATUS
+        pet_status_view_set_state(PET_STATE_IDLE);
+#endif
         break;
     }
     free(p);
@@ -889,6 +953,23 @@ int lvgl_ui_channel_set_ptt(int state)
     return 0;
 }
 
+/* Drive the pet status ring from the AP agent's lifecycle state (M7 差异化页).
+ * On the CP/qemu core this delegates to pet_status_view; on the AP UI_RPMSG
+ * shim (ui_rpmsg_client.c) the same symbol sends UI_RPMSG_SET_PET_STATE. */
+int lvgl_ui_channel_set_pet_state(int state)
+{
+#ifdef CONFIG_AI_AGENT_PET_STATUS
+    if (state < 0 || state > PET_STATE_ERROR) {
+        return -EINVAL;
+    }
+    pet_status_view_set_state((enum pet_state)state);
+    return 0;
+#else
+    (void)state;
+    return -ENOSYS;
+#endif
+}
+
 
 
 /* Called by lv_timer_handler() inside the LVGL thread.
@@ -905,6 +986,10 @@ static void chat_view_add_message_async_cb(void* data)
         free(payload);
         return;
     }
+
+    /* A new chat message resets the pet-yield idle timer (the conversation
+     * is alive).  No-op when PET_STATUS is off. */
+    pet_idle_reset();
 
     chat_view_add_message(payload->text, payload->is_user, payload->bar_color);
     free(payload);

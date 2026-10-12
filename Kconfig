@@ -486,12 +486,31 @@ config EXAMPLES_AI_AGENT_UI_CP
 	default n
 	depends on GRAPHICS_LVGL
 	---help---
-		CP-core UI renderer: builds only the LVGL chat-view assets
-		(lvgl_ui_channel + lvgl_toast + MiSans CJK font) into a
-		standalone NSH builtin, without agent_main/llm/voice/TLS.
-		voice_channel_* and message_bus are stubbed on this side (CP
-		only renders; TTS/ASR live on AP). Launch from CP NSH; the
-		AP->CP UI RPMsg endpoint will be wired in a follow-up slice.
+	  CP-core UI renderer: builds only the LVGL chat-view assets
+	  (lvgl_ui_channel + lvgl_toast + MiSans CJK font) into a
+	  standalone NSH builtin, without agent_main/llm/voice/TLS.
+	  voice_channel_* and message_bus are stubbed on this side (CP
+	  only renders; TTS/ASR live on AP). Launch from CP NSH; the
+	  AP->CP UI RPMsg endpoint will be wired in a follow-up slice.
+
+# Defined at top-level (NOT inside `if EXAMPLES_AI_AGENT_VELA`) so it is
+# selectable on the CP core, which builds under EXAMPLES_AI_AGENT_UI_CP
+# without EXAMPLES_AI_AGENT_VELA.  On qemu/AP it is reachable via
+# AI_AGENT_LVGL_UI / AI_AGENT_UI_RPMSG (which do sit inside the VELA
+# block); the ap defconfig leaves it off because the AP has no LVGL.
+config AI_AGENT_PET_STATUS
+	bool "Pet status ring home screen (M7 差异化页, pure-LVGL 退路)"
+	default n
+	depends on AI_AGENT_LVGL_UI || AI_AGENT_UI_RPMSG || EXAMPLES_AI_AGENT_UI_CP
+	---help---
+	  Build pet_status_view.c: a round-screen "pet" home screen that mirrors
+	  the agent's lifecycle state (idle/listening/thinking/executing/waiting/
+	  error) via color + animation, as a 待机首屏.  Pure LVGL (the Rust/mirui
+	  退路 from UI方案.md §2.4 when the no_std runtime is unavailable).
+	  On dual-core (路 B) the CP renders it and the AP drives state over
+	  RPMsg (UI_RPMSG_SET_PET_STATE); lvgl_ui_channel also mirrors PTT
+	  state onto the pet and yields the foreground to the pet after chat
+	  idle, so the pet "lives" during PTT without extra AP wiring.
 
 if EXAMPLES_AI_AGENT_UI_CP
 

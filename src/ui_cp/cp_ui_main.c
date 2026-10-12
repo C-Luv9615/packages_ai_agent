@@ -39,6 +39,9 @@
 
 #include "ui/lvgl_ui_channel.h"
 #include "ui_rpmsg_server.h"
+#ifdef CONFIG_AI_AGENT_PET_STATUS
+#include "ui/pet_status_view.h"
+#endif
 
 #define TAG "ai_agent_ui"
 
@@ -62,12 +65,23 @@ int main(int argc, FAR char *argv[])
       return 2;
     }
 
+#ifdef CONFIG_AI_AGENT_PET_STATUS
+  /* M7 差异化页 (pure-LVGL 退路): show the pet status ring as the cold-start
+   * home screen.  The chat screen is built but stays in the background; the
+   * first incoming RPMsg message (or a SET_PET_STATE) drives the foreground.
+   * Idle-yield (lvgl_ui_channel's timer) brings the pet back after a chat
+   * conversation goes quiet.  No test bubble here — it would immediately
+   * displace the pet home screen we want to demo. */
+  pet_status_view_show();
+  syslog(LOG_INFO, "[%s] pet status ring is the home screen\n", TAG);
+#else
   /* Bring the chat screen to the foreground. */
   lvgl_ui_channel_show();
 
   /* Smoke bubble: proves the chat-view + MiSans CJK font render on the
    * real CP+LCD. voice_channel_speak() is a no-op stub on this side. */
   lvgl_ui_channel_send("CP真机 UI 测试气泡：ai_agent 界面已点亮");
+#endif
 
   /* Open the AP→CP UI RPMsg endpoint.  Once the AP agent's link comes up,
    * bubbles/toasts it sends over RPMSG land here and are rendered by the

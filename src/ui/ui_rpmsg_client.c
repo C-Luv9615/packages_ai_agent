@@ -321,6 +321,30 @@ int lvgl_ui_channel_set_ptt(int state)
   return ret;
 }
 
+/* Drive the CP-side pet status ring (M7 差异化页) from the AP agent's
+ * lifecycle state.  payload[0] = enum pet_state (0..5). */
+int lvgl_ui_channel_set_pet_state(int state)
+{
+  struct ui_rpmsg_msg m;
+  int ret;
+
+  if (state < 0 || state > 5)
+    {
+      return -EINVAL;
+    }
+  memset(&m, 0, sizeof(m));
+  m.op = UI_RPMSG_SET_PET_STATE;
+  m.payload[0] = (uint8_t)state;
+  m.payload_len = 1;
+
+  ret = ui_rpmsg_send(&m);
+  if (ret < 0)
+    {
+      syslog(LOG_WARNING, "[%s] set_pet_state to CP failed: %d\n", TAG, ret);
+    }
+  return ret;
+}
+
 void lvgl_toast_show_async(const char *title, const char *body,
                            uint32_t bar_color, uint32_t duration_ms)
 {
