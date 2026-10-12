@@ -577,6 +577,39 @@ static void test_offline_refuses_output(void)
     printf("  offline refuses outbound except hello: ok\n");
 }
 
+/* ── Naming why prompt text is refused ─────────────────────────────── */
+
+static void test_prompt_text_problem(void)
+{
+    char out[192];
+    char text[REMOTE_PROMPT_TEXT_MAX + 2];
+
+    /* Valid text, Chinese included, is not a problem. */
+    assert(!remote_prompt_text_problem("看看/tmp 占用了多少空间", out, sizeof(out)));
+    assert(!remote_prompt_text_problem("hello", out, sizeof(out)));
+
+    assert(remote_prompt_text_problem("", out, sizeof(out)));
+    assert(strstr(out, "empty or whitespace-only") != NULL);
+    assert(remote_prompt_text_problem(" \t ", out, sizeof(out)));
+    assert(strstr(out, "empty or whitespace-only") != NULL);
+
+    memset(text, 'a', REMOTE_PROMPT_TEXT_MAX + 1);
+    text[REMOTE_PROMPT_TEXT_MAX + 1] = '\0';
+    assert(remote_prompt_text_problem(text, out, sizeof(out)));
+    assert(strstr(out, "2049 bytes, over the 2048-byte limit") != NULL);
+
+    /* "看" is e7 9c 8b; dropping its middle byte leaves a lead byte
+     * followed by a continuation that no longer completes it. */
+    assert(remote_prompt_text_problem("\xe7\x8b/tmp", out, sizeof(out)));
+    assert(strstr(out, "not valid UTF-8 at byte 0 of 6 (0xe7 0x8b 0x2f)") != NULL);
+
+    /* "在" in GBK is d4 da: d4 is a UTF-8 lead, da is not a continuation. */
+    assert(remote_prompt_text_problem("ab\xd4\xda", out, sizeof(out)));
+    assert(strstr(out, "at byte 2 of 4 (0xd4 0xda)") != NULL);
+
+    printf("  prompt text refusals are named: ok\n");
+}
+
 /* ── Model reporting and selection ─────────────────────────────────── */
 
 static void test_model_selection(void)
@@ -712,6 +745,7 @@ int main(void)
     test_send_failure_releases_turn();
     test_codec_receive();
     test_offline_refuses_output();
+    test_prompt_text_problem();
     test_model_selection();
     printf("all remote-control protocol tests passed\n");
     return 0;

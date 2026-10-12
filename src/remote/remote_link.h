@@ -271,6 +271,11 @@ bool remote_link_turn_result(struct remote_link_s* link,
 bool remote_link_can_submit_prompt(const struct remote_link_s* link,
     const char* text);
 
+/* When the text alone would be refused, writes which check it fails (empty,
+ * over REMOTE_PROMPT_TEXT_MAX, or where its UTF-8 breaks) and returns true.
+ * Returns false for text that passes, whatever the link state. */
+bool remote_prompt_text_problem(const char* text, char* out, size_t out_size);
+
 /* Returns "once" / "deny" when the pending prompt permits that decision,
  * NULL otherwise. */
 const char* remote_link_decision_value(const struct remote_link_s* link,

@@ -92,13 +92,12 @@ static void clear_turn(struct remote_link_s* link, bool clear_transcript)
     }
 }
 
-bool remote_valid_utf8(const char* text)
+/* Byte offset of the first byte that does not begin a well-formed UTF-8
+ * sequence, or SIZE_MAX when the whole string is valid. */
+static size_t utf8_invalid_at(const char* text)
 {
-    const unsigned char* cursor = (const unsigned char*)text;
-
-    if (text == NULL) {
-        return false;
-    }
+    const unsigned char* start = (const unsigned char*)text;
+    const unsigned char* cursor = start;
 
     while (*cursor != '\0') {
         if (*cursor < 0x80) {
@@ -110,11 +109,16 @@ bool remote_valid_utf8(const char* text)
         } else if (*cursor >= 0xf0 && *cursor <= 0xf4 && cursor[1] != '\0' && cursor[2] != '\0' && cursor[3] != '\0' && (cursor[1] & 0xc0) == 0x80 && (cursor[2] & 0xc0) == 0x80 && (cursor[3] & 0xc0) == 0x80 && !(*cursor == 0xf0 && cursor[1] < 0x90) && !(*cursor == 0xf4 && cursor[1] >= 0x90)) {
             cursor += 4;
         } else {
-            return false;
+            return (size_t)(cursor - start);
         }
     }
 
-    return true;
+    return SIZE_MAX;
+}
+
+bool remote_valid_utf8(const char* text)
+{
+    return text != NULL && utf8_invalid_at(text) == SIZE_MAX;
 }
 
 bool remote_valid_identifier(const char* value, size_t maximum)
@@ -551,6 +555,51 @@ bool remote_link_can_submit_prompt(const struct remote_link_s* link,
     /* Refusing while has_prompt is set keeps a local tool call from waiting
      * behind a human permission decision on the remote agent. */
     return link != NULL && link->state != REMOTE_STATE_OFFLINE && link->chat_supported && strcmp(link->chat_epoch, link->epoch) == 0 && !link->turn_active && !link->has_prompt && text != NULL && text[0] != '\0' && strlen(text) <= REMOTE_PROMPT_TEXT_MAX && remote_valid_utf8(text) && has_nonspace(text);
+}
+
+bool remote_prompt_text_problem(const char* text, char* out, size_t out_size)
+{
+    const unsigned char* bad;
+    char bytes[16];
+    size_t length;
+    size_t offset;
+    size_t used = 0;
+    size_t i;
+
+    if (out == NULL || out_size == 0) {
+        return false;
+    }
+
+    if (text == NULL || !has_nonspace(text)) {
+        snprintf(out, out_size, "prompt is empty or whitespace-only");
+        return true;
+    }
+
+    length = strlen(text);
+    if (length > REMOTE_PROMPT_TEXT_MAX) {
+        snprintf(out, out_size, "prompt is %zu bytes, over the %d-byte limit",
+            length, REMOTE_PROMPT_TEXT_MAX);
+        return true;
+    }
+
+    offset = utf8_invalid_at(text);
+    if (offset == SIZE_MAX) {
+        return false;
+    }
+
+    /* The offset and the bytes there tell a dropped byte (a lead byte
+     * followed by ASCII) from a terminal sending another encoding. */
+    bad = (const unsigned char*)text + offset;
+    for (i = 0; i < 3 && bad[i] != '\0'; i++) {
+        used += snprintf(bytes + used, sizeof(bytes) - used, "%s0x%02x",
+            i > 0 ? " " : "", bad[i]);
+    }
+
+    snprintf(out, out_size,
+        "prompt is not valid UTF-8 at byte %zu of %zu (%s): a byte was lost "
+        "on the console, or the terminal is not sending UTF-8",
+        offset, length, bytes);
+    return true;
 }
 
 const char* remote_link_decision_value(const struct remote_link_s* link,

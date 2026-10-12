@@ -569,9 +569,11 @@ static void notify_observer_reply(const char *text)
 /* Turns a refused submit into something a person or a model can act on. The
  * session refuses for several distinct reasons and they need different
  * responses, so "failed" on its own would be useless. */
-static void describe_submit_failure(char* out, size_t out_size)
+static void describe_submit_failure(const char* text, char* out,
+    size_t out_size)
 {
     struct remote_status_s status;
+    char problem[192];
 
     remote_session_status(&g_session, &status);
 
@@ -597,16 +599,16 @@ static void describe_submit_failure(char* out, size_t out_size)
         snprintf(out, out_size,
             "Error: the chat channel is not bound to this connection yet "
             "(bridge reconnected?); try again in a moment");
-    } else {
-        /* Remaining refusals are about the text itself: empty, whitespace
-         * only, over REMOTE_PROMPT_TEXT_MAX, or not valid UTF-8.  The
-         * session does not say which, so say so rather than pretend the
-         * cause is unknown.
+    } else if (remote_prompt_text_problem(text, problem, sizeof(problem))) {
+        /* Remaining refusals are about the text itself.  Name the check it
+         * failed: "empty or too long or bad UTF-8" sent people looking at
+         * the length of a 32-byte prompt that had lost a byte on the
+         * console.
          */
 
-        snprintf(out, out_size,
-            "Error: prompt text was refused (empty, whitespace-only, over "
-            "%d bytes, or not valid UTF-8)", REMOTE_PROMPT_TEXT_MAX);
+        snprintf(out, out_size, "Error: %s", problem);
+    } else {
+        snprintf(out, out_size, "Error: the prompt was refused locally");
     }
 }
 
@@ -625,7 +627,7 @@ int remote_ctrl_channel_submit(const char* text, char* out, size_t out_size)
      * turn reservation is what keeps two turns from overlapping, and nothing
      * would clear a wait that no one is performing. */
     if (!remote_session_submit_prompt(&g_session, text)) {
-        describe_submit_failure(out, out_size);
+        describe_submit_failure(text, out, out_size);
         return ERROR;
     }
     /* The submit succeeded, so the turn that is starting belongs to rask:
@@ -685,7 +687,7 @@ int remote_ctrl_channel_prompt(const char* text, uint32_t timeout_ms,
         g_turn_pending = false;
         pthread_mutex_unlock(&g_turn_lock);
 
-        describe_submit_failure(out, out_size);
+        describe_submit_failure(text, out, out_size);
         return ERROR;
     }
 
