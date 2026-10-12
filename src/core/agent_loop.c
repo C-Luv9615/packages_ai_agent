@@ -46,6 +46,10 @@
 
 #include "cJSON.h"
 
+#if defined(CONFIG_AI_AGENT_LVGL_UI) || defined(CONFIG_AI_AGENT_UI_RPMSG)
+#include "ui/lvgl_ui_channel.h"
+#endif
+
 static const char* TAG = "agent";
 
 #define TOOL_OUTPUT_SIZE (8 * 1024)
@@ -1545,6 +1549,14 @@ static void* agent_loop_task(void* arg)
 
         char* final_text = NULL;
 
+#if defined(CONFIG_AI_AGENT_LVGL_UI) || defined(CONFIG_AI_AGENT_UI_RPMSG)
+        /* Entering the LLM path (vision or ReAct) — drive the pet to THINKING
+         * (blue, spin).  Fills the gap after voice_channel_dispatch returns
+         * and the PTT mirror drops to IDLE: without this the pet shows
+         * idle-green while the LLM is still working.  pet_status_view.h: 2. */
+        (void)lvgl_ui_channel_set_pet_state(2);
+#endif
+
         /* Vision path */
         final_text = handle_vision_message(&msg);
         if (final_text) {
@@ -1558,6 +1570,13 @@ static void* agent_loop_task(void* arg)
         }
 
         dispatch_response(&msg, final_text);
+
+#if defined(CONFIG_AI_AGENT_LVGL_UI) || defined(CONFIG_AI_AGENT_UI_RPMSG)
+        /* LLM/reply phase done — back to IDLE.  A downstream TTS speak
+         * failure will later drive ERROR, which the RPMsg FIFO delivers
+         * after this IDLE so red+shake wins.  pet_status_view.h: 0. */
+        (void)lvgl_ui_channel_set_pet_state(0);
+#endif
 
         /* Free image_b64 if not already freed by vision path */
         free(msg.image_b64);
