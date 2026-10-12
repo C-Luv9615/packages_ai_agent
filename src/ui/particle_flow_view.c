@@ -421,7 +421,7 @@ int particle_flow_view_init(void)
 
   s_pf.initialized = true;
   syslog(LOG_INFO, "[%s] init OK (圆屏粒子流, %d 粒子, disp %dx%d R=%d)\n",
-         TAG, N_PARTICLES, h, v, s_pf.R);
+         TAG, N_PARTICLES, (int)h, (int)v, (int)s_pf.R);
   return 0;
 }
 
