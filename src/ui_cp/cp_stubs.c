@@ -50,6 +50,10 @@ int voice_channel_stop_with_text(char *text_out, size_t text_cap)
   return 0;
 }
 
+/* CP only renders; an utterance produced here has nowhere to go locally.
+ * M5 will forward PTT events back to AP over the UI RPMsg endpoint. */
+void voice_channel_dispatch(const char *text)                { (void)text; }
+
 int voice_channel_speak(const char *text)                    { (void)text; return 0; }
 int voice_channel_beep(unsigned int freq_hz, unsigned int ms) { (void)freq_hz; (void)ms; return 0; }
 int voice_channel_test_tts(const char *text, const char *out) { (void)text; (void)out; return 0; }
