@@ -139,6 +139,9 @@ static void cmd_help(void)
         "  rstat                - Remote agent state, model, billing, approval\n"
         "  rreply               - Print the remote agent's full reply\n"
         "  rmodel [n|name]      - List remote agent models, or switch to one\n"
+        "  rmode [normal|reads|trust] - Show or switch the approval mode\n"
+        "  rnew                 - Open a fresh session\n"
+        "  ruse [n]             - List sessions, or switch to generation n\n"
         "  rusage               - Refresh remote session billing\n"
         "  ronce                - Approve the pending request (human only)\n"
         "  rdeny                - Deny the pending request (human only)\n"
@@ -1188,6 +1191,12 @@ static void* cli_thread(void* arg)
             cmd_remote_output();
         else if (strcmp(cmd, "rmodel") == 0)
             cmd_remote_model(argc, argv);
+        else if (strcmp(cmd, "rmode") == 0)
+            cmd_remote_mode(argc, argv);
+        else if (strcmp(cmd, "rnew") == 0)
+            cmd_remote_new();
+        else if (strcmp(cmd, "ruse") == 0)
+            cmd_remote_use(argc, argv);
         else if (strcmp(cmd, "rusage") == 0)
             cmd_remote_usage();
         else if (strcmp(cmd, "ronce") == 0)

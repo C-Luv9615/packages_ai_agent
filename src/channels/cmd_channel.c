@@ -236,6 +236,12 @@ void cmd_remote_status(void)
     if (status.model[0] != '\0') {
         printf("  Model     : %s\n", status.model);
     }
+    /* Which approval policy the agent's tools run under — the whole reason a
+     * tool call asks (or does not ask) on this board. */
+    printf("  Mode      : %s\n", status.approval_mode);
+    if (status.current_session[0] != '\0') {
+        printf("  Session   : gen%s\n", status.current_session);
+    }
     if (status.billing[0] != '\0') {
         printf("  %s\n", status.billing);
     }
@@ -391,6 +397,112 @@ void cmd_remote_model(int argc, char** argv)
 
     printf("Requested '%s'. The bridge decides whether it applies; 'rstat' "
            "shows what took effect.\n", target);
+}
+
+void cmd_remote_mode(int argc, char** argv)
+{
+    struct remote_status_s status;
+    const char* wire;
+
+    if (remote_ctrl_channel_status(&status) != OK) {
+        printf("Remote control is not configured. Use set_remote first.\n");
+        return;
+    }
+
+    if (argc < 2) {
+        printf("Approval mode: %s\n", status.approval_mode);
+        printf("Switch with 'rmode normal|reads|trust':\n");
+        printf("  normal  most actions ask\n");
+        printf("  reads   reads auto-approved; everything else asks\n");
+        printf("  trust   everything auto-approved for this session\n");
+        return;
+    }
+
+    /* The wire vocabulary is the source of truth; the short words are what a
+     * human types. yolo is refused LOCALLY so the intent is explained rather
+     * than answered with a silent 'mode_not_allowed' from the bridge. */
+    if (strcmp(argv[1], "normal") == 0 || strcmp(argv[1], "interactive") == 0) {
+        wire = "interactive";
+    } else if (strcmp(argv[1], "reads") == 0 || strcmp(argv[1], "trust_reads") == 0) {
+        wire = "trust_reads";
+    } else if (strcmp(argv[1], "trust") == 0) {
+        wire = "trust";
+    } else {
+        printf("Unknown mode '%s'. Run 'rmode' to see the list.\n", argv[1]);
+        return;
+    }
+
+    if (remote_ctrl_channel_set_mode(wire) != OK) {
+        printf("Could not request '%s': the link is offline or the mode is "
+               "unusable.\n", argv[1]);
+        return;
+    }
+
+    /* Echo the word the human typed.  The wire vocabulary is what the
+     * protocol carries, and answering "trust_reads" to someone who typed
+     * "reads" reads like the wrong mode was applied.
+     */
+
+    if (strcmp(argv[1], wire) == 0) {
+        printf("Approval mode requested: %s. "
+               "It applies from the next tool call.\n", wire);
+    } else {
+        printf("Approval mode requested: %s (%s). "
+               "It applies from the next tool call.\n", argv[1], wire);
+    }
+}
+
+void cmd_remote_new(void)
+{
+    if (remote_ctrl_channel_new_session() != OK) {
+        printf("Could not open a new session: the link is offline or "
+               "unconfigured.\n");
+        return;
+    }
+
+    printf("Requested a fresh session. 'ruse' lists it; the next 'rask' "
+           "starts it.\n");
+}
+
+void cmd_remote_use(int argc, char** argv)
+{
+    /* Static because a listing plus previews is too large for this thread's
+     * stack — same rule as the model view in cmd_remote_model. */
+    static char listing[REMOTE_SESSION_LIST_TEXT_MAX];
+    char current[12];
+
+    if (remote_ctrl_channel_session_view(listing, sizeof(listing), current,
+            sizeof(current))
+        != OK) {
+        printf("Remote control is not configured. Use set_remote first.\n");
+        return;
+    }
+
+    if (argc < 2) {
+        if (current[0] != '\0') {
+            printf("Current session: gen%s\n", current);
+        } else {
+            printf("Current session: just opened — 'ruse' again to see it "
+                   "numbered.\n");
+        }
+        if (listing[0] != '\0') {
+            printf("%s", listing);
+        }
+        printf("Refreshing; switch with 'ruse <number>'.\n");
+        /* The fresh listing prints as it arrives (REMOTE_EVENT_SESSIONS). */
+        if (remote_ctrl_channel_request_sessions() != OK) {
+            printf("Could not request the listing: the link is offline.\n");
+        }
+        return;
+    }
+
+    if (remote_ctrl_channel_switch_session(argv[1]) != OK) {
+        printf("Could not switch to gen%s: the link is offline or the target "
+               "is not a generation number.\n", argv[1]);
+        return;
+    }
+
+    printf("Switched to gen%s. It applies from the next 'rask'.\n", argv[1]);
 }
 
 void cmd_remote_usage(void)

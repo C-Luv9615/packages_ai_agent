@@ -151,7 +151,13 @@ static void on_session_event(void* context, enum remote_event_e event,
          * reply. Length is not a concern — CONFIG_SYSLOG_BUFFER is off on this
          * board, so the raw stream writes straight through with no fixed buffer
          * to truncate against. */
-        syslog(LOG_INFO, "[%s] reply:\n%s", TAG, text != NULL ? text : "");
+        /* agent_main.c already prints the reply to the console.  Logging
+         * the whole body here printed it a second time on a board where
+         * syslog shares that console.
+         */
+
+        syslog(LOG_INFO, "[%s] reply %u bytes\n", TAG,
+            text != NULL ? (unsigned)strlen(text) : 0u);
         notify_observer_reply(text);
         /* rask-initiated turns also ride the cli outbound branch so the reply
          * lands where an `ask` reply lands: console card, LVGL chat view and
@@ -213,6 +219,12 @@ static void on_session_event(void* context, enum remote_event_e event,
 
     case REMOTE_EVENT_BILLING:
         syslog(LOG_INFO, "[%s] %s\n", TAG, text != NULL ? text : "");
+        break;
+
+    case REMOTE_EVENT_SESSIONS:
+        /* The whole listing in one record, like the reply block: nx_vsyslog
+         * stamps its prefix once per call, so the list reads as a block. */
+        syslog(LOG_INFO, "[remote_ctrl] sessions:\n%s", text != NULL ? text : "");
         break;
 
     default:
@@ -435,6 +447,58 @@ int remote_ctrl_channel_select_model(const char* model)
     return remote_session_select_model(&g_session, model) ? OK : ERROR;
 }
 
+int remote_ctrl_channel_set_mode(const char* mode)
+{
+    if (mode == NULL || !g_configured) {
+        return ERROR;
+    }
+
+    return remote_session_set_mode(&g_session, mode) ? OK : ERROR;
+}
+
+int remote_ctrl_channel_request_sessions(void)
+{
+    if (!g_configured) {
+        return ERROR;
+    }
+
+    return remote_session_request_sessions(&g_session) ? OK : ERROR;
+}
+
+int remote_ctrl_channel_new_session(void)
+{
+    if (!g_configured) {
+        return ERROR;
+    }
+
+    return remote_session_new_session(&g_session) ? OK : ERROR;
+}
+
+int remote_ctrl_channel_switch_session(const char* target)
+{
+    if (target == NULL || !g_configured) {
+        return ERROR;
+    }
+
+    return remote_session_switch_session(&g_session, target) ? OK : ERROR;
+}
+
+int remote_ctrl_channel_session_view(char* list_out, size_t list_size,
+    char* current_out, size_t current_size)
+{
+    if (list_out == NULL || list_size == 0 || !g_configured) {
+        return ERROR;
+    }
+
+    pthread_mutex_lock(&g_session.lock);
+    snprintf(list_out, list_size, "%s", g_session.session_list_text);
+    if (current_out != NULL && current_size > 0) {
+        snprintf(current_out, current_size, "%s", g_session.current_session);
+    }
+    pthread_mutex_unlock(&g_session.lock);
+    return OK;
+}
+
 int remote_ctrl_channel_decide(enum remote_decision_e decision)
 {
     if (!g_configured) {
@@ -519,8 +583,27 @@ static void describe_submit_failure(char* out, size_t out_size)
     } else if (!status.chat_supported) {
         snprintf(out, out_size,
             "Error: the remote bridge does not offer chat turns");
+    } else if (!status.chat_epoch_current) {
+        /* remote_link_can_submit_prompt() also requires chat_epoch == epoch.
+         * A bridge reconnect refreshes epoch but leaves chat_epoch on the
+         * old value until the next chat advertisement, and the turn was
+         * refused with the generic "rejected locally" until this case had
+         * a name of its own.
+         */
+
+        snprintf(out, out_size,
+            "Error: the chat channel is not bound to this connection yet "
+            "(bridge reconnected?); try again in a moment");
     } else {
-        snprintf(out, out_size, "Error: prompt rejected locally");
+        /* Remaining refusals are about the text itself: empty, whitespace
+         * only, over REMOTE_PROMPT_TEXT_MAX, or not valid UTF-8.  The
+         * session does not say which, so say so rather than pretend the
+         * cause is unknown.
+         */
+
+        snprintf(out, out_size,
+            "Error: prompt text was refused (empty, whitespace-only, over "
+            "%d bytes, or not valid UTF-8)", REMOTE_PROMPT_TEXT_MAX);
     }
 }
 

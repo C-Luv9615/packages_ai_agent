@@ -70,6 +70,8 @@ void remote_session_init(struct remote_session_s* session, const char* nonce)
     memset(session, 0, sizeof(*session));
     pthread_mutex_init(&session->lock, NULL);
     remote_link_init(&session->link, nonce);
+    strcpy(session->approval_mode, "interactive");
+    strcpy(session->current_session, "0");
 }
 
 void remote_session_destroy(struct remote_session_s* session)
@@ -412,6 +414,103 @@ bool remote_session_select_model(struct remote_session_s* session,
     return built && remote_transport_send(transport, message, strlen(message));
 }
 
+bool remote_session_set_mode(struct remote_session_s* session,
+    const char* mode)
+{
+    char message[REMOTE_CODEC_MODE_BUF];
+    struct remote_transport_s* transport;
+    bool built;
+
+    if (session == NULL) {
+        return false;
+    }
+
+    pthread_mutex_lock(&session->lock);
+    built = remote_codec_build_mode(&session->link, mode, message,
+        sizeof(message));
+    transport = current_transport(session);
+    pthread_mutex_unlock(&session->lock);
+
+    /* The local copy is what `rstat` reports: updated only when the request
+     * actually leaves the device, so a refused build never lies about it. */
+    if (built && remote_transport_send(transport, message, strlen(message))) {
+        pthread_mutex_lock(&session->lock);
+        snprintf(session->approval_mode, sizeof(session->approval_mode), "%s", mode);
+        pthread_mutex_unlock(&session->lock);
+        return true;
+    }
+    return false;
+}
+
+/* ── Session chain (rnew / ruse) ────────────────────────────────────── */
+
+static bool send_session_frame(struct remote_session_s* session,
+    const char* target)
+{
+    char message[REMOTE_CODEC_SESSION_BUF];
+    struct remote_transport_s* transport;
+    bool built;
+
+    pthread_mutex_lock(&session->lock);
+    if (target == NULL) {
+        built = remote_codec_build_session_query(&session->link, message,
+            sizeof(message));
+    } else if (target[0] == '\0') {
+        built = remote_codec_build_session_new(&session->link, message,
+            sizeof(message));
+    } else {
+        built = remote_codec_build_session_switch(&session->link, target,
+            message, sizeof(message));
+    }
+    transport = current_transport(session);
+    pthread_mutex_unlock(&session->lock);
+
+    return built && remote_transport_send(transport, message, strlen(message));
+}
+
+bool remote_session_request_sessions(struct remote_session_s* session)
+{
+    return session != NULL && send_session_frame(session, NULL);
+}
+
+bool remote_session_new_session(struct remote_session_s* session)
+{
+    if (session == NULL || !send_session_frame(session, "")) {
+        return false;
+    }
+    /* The gateway assigns the generation; the next listing marks it current.
+     * Cleared rather than guessed, so `rstat` never prints a stale number
+     * dressed up as the new one. */
+    pthread_mutex_lock(&session->lock);
+    session->current_session[0] = '\0';
+    pthread_mutex_unlock(&session->lock);
+    return true;
+}
+
+bool remote_session_switch_session(struct remote_session_s* session,
+    const char* target)
+{
+    if (session == NULL || !send_session_frame(session, target)) {
+        return false;
+    }
+    pthread_mutex_lock(&session->lock);
+    snprintf(session->current_session, sizeof(session->current_session), "%s", target);
+    pthread_mutex_unlock(&session->lock);
+    return true;
+}
+
+void remote_session_sessions(struct remote_session_s* session,
+    const char* text)
+{
+    if (session == NULL || text == NULL) {
+        return;
+    }
+    pthread_mutex_lock(&session->lock);
+    snprintf(session->session_list_text, sizeof(session->session_list_text), "%s", text);
+    pthread_mutex_unlock(&session->lock);
+    emit(session, REMOTE_EVENT_SESSIONS, text);
+}
+
 bool remote_session_query_usage(struct remote_session_s* session)
 {
     char message[REMOTE_CODEC_USAGE_QUERY_BUF];
@@ -492,7 +591,10 @@ void remote_session_status(struct remote_session_s* session,
     out->decision_in_flight = session->decision_in_flight;
     out->turn_active = session->link.turn_active;
     out->chat_supported = session->link.chat_supported;
+    out->chat_epoch_current = strcmp(session->link.chat_epoch, session->link.epoch) == 0;
     strcpy(out->model, session->link.model);
+    strcpy(out->approval_mode, session->approval_mode);
+    strcpy(out->current_session, session->current_session);
     if (!remote_link_billing_text(&session->link, out->billing, sizeof(out->billing))) {
         out->billing[0] = '\0';
     }

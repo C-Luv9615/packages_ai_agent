@@ -21,6 +21,7 @@
 
 #include <float.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -424,6 +425,46 @@ static void receive_models(struct remote_session_s* session, const cJSON* root)
     remote_session_models(session, &models);
 }
 
+static void receive_session_list(struct remote_session_s* session,
+    const cJSON* root)
+{
+    const cJSON* nonce = field(root, "connection_nonce");
+    const cJSON* epoch = field(root, "epoch");
+    const cJSON* sessions = field(root, "sessions");
+    const cJSON* entry;
+    char text[REMOTE_SESSION_LIST_TEXT_MAX];
+    size_t used = 0;
+    int written;
+
+    if (!valid_string(nonce) || !valid_string(epoch) || strlen(nonce->valuestring) > REMOTE_NONCE_MAX || strlen(epoch->valuestring) > REMOTE_EPOCH_MAX || !cJSON_IsArray(sessions)) {
+        return;
+    }
+
+    /* Formatted here, stored whole: this is a console listing, not authority
+     * state, so a view struct would be three copies of the same bytes. */
+    cJSON_ArrayForEach(entry, sessions)
+    {
+        const cJSON* id = cJSON_IsObject(entry) ? field(entry, "id") : NULL;
+        const cJSON* preview = cJSON_IsObject(entry) ? field(entry, "preview") : NULL;
+        const cJSON* current = cJSON_IsObject(entry) ? field(entry, "current") : NULL;
+
+        if (!valid_string(id) || (preview != NULL && !cJSON_IsString(preview))) {
+            continue;
+        }
+        written = snprintf(text + used, sizeof(text) - used, "%s%s  %s\n",
+            cJSON_IsTrue(current) ? "*" : " ", id->valuestring,
+            (preview != NULL && preview->valuestring[0] != '\0') ? preview->valuestring : "(empty)");
+        if (written < 0 || (size_t)written >= sizeof(text) - used) {
+            /* Out of room: keep what formatted, mark it partial. */
+            used = sizeof(text) - 1;
+            break;
+        }
+        used += (size_t)written;
+    }
+
+    remote_session_sessions(session, text);
+}
+
 static void receive_hello_ack(struct remote_session_s* session,
     const cJSON* root)
 {
@@ -573,6 +614,8 @@ void remote_codec_receive(struct remote_session_s* session,
         receive_turn_result(session, root);
     } else if (strcmp(type->valuestring, "models") == 0) {
         receive_models(session, root);
+    } else if (strcmp(type->valuestring, "session_list") == 0) {
+        receive_session_list(session, root);
     }
 
     cJSON_Delete(root);
@@ -708,6 +751,98 @@ bool remote_codec_build_model_select(const struct remote_link_s* link,
 
     root = begin_command("model_select");
     if (root == NULL || cJSON_AddStringToObject(root, "connection_nonce", link->nonce) == NULL || cJSON_AddStringToObject(root, "epoch", link->epoch) == NULL || cJSON_AddStringToObject(root, "model", model) == NULL) {
+        cJSON_Delete(root);
+        return false;
+    }
+
+    return finish(root, out, out_size);
+}
+
+/* The device-settable approval modes. yolo ("auto") is absent on purpose:
+ * the dashboard is the only surface allowed to open the process-wide tap, so
+ * a lost board can never escalate past trust. */
+static bool device_settable_mode(const char* mode)
+{
+    return mode != NULL && (strcmp(mode, "interactive") == 0 || strcmp(mode, "trust_reads") == 0 || strcmp(mode, "trust") == 0);
+}
+
+bool remote_codec_build_mode(const struct remote_link_s* link,
+    const char* mode, char* out, size_t out_size)
+{
+    cJSON* root;
+
+    if (link == NULL || out == NULL || out_size == 0 || !device_settable_mode(mode) || !remote_valid_identifier(link->nonce, REMOTE_NONCE_MAX) || !remote_valid_identifier(link->epoch, REMOTE_EPOCH_MAX)) {
+        return false;
+    }
+
+    root = begin_command("mode");
+    if (root == NULL || cJSON_AddStringToObject(root, "connection_nonce", link->nonce) == NULL || cJSON_AddStringToObject(root, "epoch", link->epoch) == NULL || cJSON_AddStringToObject(root, "mode", mode) == NULL) {
+        cJSON_Delete(root);
+        return false;
+    }
+
+    return finish(root, out, out_size);
+}
+
+/* Session frames: the device drives its own generation chain (new / switch /
+ * list) and never names another conversation's key — the gateway owns those. */
+
+bool remote_codec_build_session_query(const struct remote_link_s* link,
+    char* out, size_t out_size)
+{
+    cJSON* root;
+
+    if (link == NULL || out == NULL || out_size == 0 || !remote_valid_identifier(link->nonce, REMOTE_NONCE_MAX) || !remote_valid_identifier(link->epoch, REMOTE_EPOCH_MAX)) {
+        return false;
+    }
+
+    root = begin_command("session_list");
+    if (root == NULL || cJSON_AddStringToObject(root, "connection_nonce", link->nonce) == NULL || cJSON_AddStringToObject(root, "epoch", link->epoch) == NULL) {
+        cJSON_Delete(root);
+        return false;
+    }
+
+    return finish(root, out, out_size);
+}
+
+bool remote_codec_build_session_new(const struct remote_link_s* link,
+    char* out, size_t out_size)
+{
+    cJSON* root;
+
+    if (link == NULL || out == NULL || out_size == 0 || !remote_valid_identifier(link->nonce, REMOTE_NONCE_MAX) || !remote_valid_identifier(link->epoch, REMOTE_EPOCH_MAX)) {
+        return false;
+    }
+
+    root = begin_command("session_new");
+    if (root == NULL || cJSON_AddStringToObject(root, "connection_nonce", link->nonce) == NULL || cJSON_AddStringToObject(root, "epoch", link->epoch) == NULL) {
+        cJSON_Delete(root);
+        return false;
+    }
+
+    return finish(root, out, out_size);
+}
+
+bool remote_codec_build_session_switch(const struct remote_link_s* link,
+    const char* target, char* out, size_t out_size)
+{
+    cJSON* root;
+    const char* cursor;
+
+    if (link == NULL || target == NULL || target[0] == '\0' || out == NULL || out_size == 0 || !remote_valid_identifier(link->nonce, REMOTE_NONCE_MAX) || !remote_valid_identifier(link->epoch, REMOTE_EPOCH_MAX)) {
+        return false;
+    }
+
+    /* A generation number, nothing else: the gateway resolves it inside the
+     * device's own bucket, so a crafted target can never name a foreign key. */
+    for (cursor = target; *cursor != '\0'; cursor++) {
+        if (*cursor < '0' || *cursor > '9') {
+            return false;
+        }
+    }
+
+    root = begin_command("session_switch");
+    if (root == NULL || cJSON_AddStringToObject(root, "connection_nonce", link->nonce) == NULL || cJSON_AddStringToObject(root, "epoch", link->epoch) == NULL || cJSON_AddStringToObject(root, "target", target) == NULL) {
         cJSON_Delete(root);
         return false;
     }

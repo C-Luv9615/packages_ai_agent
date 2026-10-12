@@ -42,6 +42,8 @@ extern "C" {
 #define REMOTE_CODEC_DECISION_BUF 512
 #define REMOTE_CODEC_USAGE_QUERY_BUF 192
 #define REMOTE_CODEC_MODEL_SELECT_BUF 320
+#define REMOTE_CODEC_MODE_BUF 192
+#define REMOTE_CODEC_SESSION_BUF 192
 
 struct remote_session_s;
 
@@ -65,6 +67,20 @@ bool remote_codec_build_prompt_submit(const struct remote_link_s* link,
     const char* request_id, const char* text, char* out, size_t out_size);
 bool remote_codec_build_model_select(const struct remote_link_s* link,
     const char* model, char* out, size_t out_size);
+/* One approval-mode change: `mode` is the WIRE spelling
+ * ("interactive" | "trust_reads" | "trust"). yolo ("auto") is deliberately
+ * not buildable here — the dashboard is the only surface allowed to open it. */
+bool remote_codec_build_mode(const struct remote_link_s* link,
+    const char* mode, char* out, size_t out_size);
+/* Session-chain frames: list (query), new (fresh generation), switch to a
+ * generation NUMBER (digits only — the gateway resolves it inside the
+ * device's own bucket). */
+bool remote_codec_build_session_query(const struct remote_link_s* link,
+    char* out, size_t out_size);
+bool remote_codec_build_session_new(const struct remote_link_s* link,
+    char* out, size_t out_size);
+bool remote_codec_build_session_switch(const struct remote_link_s* link,
+    const char* target, char* out, size_t out_size);
 
 #ifdef __cplusplus
 }

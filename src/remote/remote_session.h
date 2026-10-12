@@ -45,6 +45,9 @@
 extern "C" {
 #endif
 
+/* Console cache for one formatted `session_list` reply (ruse). Not authority. */
+#define REMOTE_SESSION_LIST_TEXT_MAX 768
+
 enum remote_event_e {
     REMOTE_EVENT_STATE, /* state or summary changed */
     REMOTE_EVENT_AGENT_OUTPUT, /* one chunk of remote agent text */
@@ -60,6 +63,9 @@ enum remote_event_e {
     REMOTE_EVENT_TURN_RESULT,
     REMOTE_EVENT_PROMPT_REJECTED,
     REMOTE_EVENT_BILLING,
+    /* A session listing arrived (`ruse` refreshed it). Carries the whole
+     * formatted list, ready to print. */
+    REMOTE_EVENT_SESSIONS,
 };
 
 /* Presentation hook. The session never prints: the channel decides whether an
@@ -78,10 +84,25 @@ struct remote_status_s {
     bool decision_in_flight;
     bool turn_active;
     bool chat_supported;
+    /* remote_link_can_submit_prompt() also wants chat_epoch == epoch: a
+     * bridge reconnect refreshes epoch while chat_epoch stays on the old
+     * value until the next chat advertisement, and that gap is a distinct
+     * refusal a person can act on ("try again in a moment") rather than a
+     * mystery.
+     */
+
+    bool chat_epoch_current;
     /* Empty until the bridge reports one. The selectable list is deliberately
      * not here: it is far larger than the rest of this struct and only one
      * command needs it, so it is fetched separately. */
     char model[REMOTE_MODEL_MAX + 1];
+    /* Last approval mode THIS DEVICE set (wire spelling). Optimistic local
+     * state: a dashboard-side change reaches the board only as the next
+     * snapshot's summary line. */
+    char approval_mode[16];
+    /* Generation this device last selected ("" right after `rnew`, before the
+     * next listing marks the new one current). */
+    char current_session[12];
 };
 
 /* The model list, copied out under the lock in one go so a console listing
@@ -109,6 +130,15 @@ struct remote_session_s {
      * over. Serialised by the turn reservation: a second submit is refused
      * while a turn is in flight. */
     char prompt_message[REMOTE_MESSAGE_MAX + 1];
+    /* Approval mode THIS DEVICE last set (wire spelling). Default
+     * "interactive"; a dashboard-side change reaches the board only as the
+     * next snapshot's summary line. */
+    char approval_mode[16];
+    /* Last formatted session listing (`ruse`). Console cache only — never
+     * authority. ``current_session`` is the generation this device last
+     * selected or saw marked current. */
+    char session_list_text[REMOTE_SESSION_LIST_TEXT_MAX];
+    char current_session[12];
 };
 
 /* ── Lifecycle ─────────────────────────────────────────────────────── */
@@ -170,6 +200,24 @@ bool remote_session_query_usage(struct remote_session_s* session);
  * so a success here means the request left the device, not that it was applied. */
 bool remote_session_select_model(struct remote_session_s* session,
     const char* model);
+
+/* Asks the bridge to switch the session's approval mode. `mode` is the wire
+ * spelling ("interactive" | "trust_reads" | "trust"); yolo is refused at the
+ * codec — the dashboard is the only surface allowed to open it. Success means
+ * the request left the device; the local copy is updated on a successful send
+ * so `rstat` reports what this device asked for. */
+bool remote_session_set_mode(struct remote_session_s* session,
+    const char* mode);
+
+/* Session chain (rnew / ruse). All three are request-only: the gateway
+ * answers `session_list` and echoes the new target in a snapshot line. */
+bool remote_session_request_sessions(struct remote_session_s* session);
+bool remote_session_new_session(struct remote_session_s* session);
+bool remote_session_switch_session(struct remote_session_s* session,
+    const char* target);
+/* Stores one formatted listing and emits REMOTE_EVENT_SESSIONS. */
+void remote_session_sessions(struct remote_session_s* session,
+    const char* text);
 
 /* Submits one chat turn to the remote agent. Safe for tools: rejects locally
  * while a turn or a permission request is active, so it fails fast instead of

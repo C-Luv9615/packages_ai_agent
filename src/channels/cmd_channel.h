@@ -42,6 +42,16 @@ void cmd_remote_usage(void);
  * the r* family stays one thing: commands a person types. */
 void cmd_remote_model(int argc, char** argv);
 
+/* rmode [normal|reads|trust|yolo] — show or switch the session's approval
+ * mode. yolo prints a refusal: the dashboard is the only surface allowed to
+ * open it. */
+void cmd_remote_mode(int argc, char** argv);
+
+/* rnew — open a fresh session generation. */
+void cmd_remote_new(void);
+/* ruse [n] — list the device's sessions (no args) or switch to generation n. */
+void cmd_remote_use(int argc, char** argv);
+
 /* Permission decisions for the remote agent. These exist only as console
  * commands (and later a GPIO key): they are the human half of the protocol and
  * are deliberately absent from the tool registry. */

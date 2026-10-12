@@ -477,7 +477,15 @@ static void* outbound_dispatch_task(void* arg)
             printf("\n[Agent]: %s\nvela> ", msg.content);
             fflush(stdout);
             pthread_mutex_unlock(&g_stdout_lock);
-            syslog(LOG_INFO, "[agent] [Agent]: %s\n", msg.content);
+
+            /* One printer only.  This syslog line used to carry the full
+             * reply a second time, and on a board where syslog shares the
+             * console the user saw the answer twice.  Log the shape of it
+             * for the record, not the text.
+             */
+
+            syslog(LOG_INFO, "[agent] reply %u bytes\n",
+                (unsigned)strlen(msg.content));
 #ifdef CONFIG_AI_AGENT_LVGL_UI
             /* Mirror CLI replies to the LVGL UI so that `ask` responses
              * (which come in on the "cli" channel) also render as chat

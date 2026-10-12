@@ -95,6 +95,22 @@ int remote_ctrl_channel_model_view(struct remote_model_view_s* out);
  * name and reports the outcome in a `models` message. */
 int remote_ctrl_channel_select_model(const char* model);
 
+/* Requests an approval-mode switch for the session. `mode` is the wire
+ * spelling ("interactive" | "trust_reads" | "trust"). yolo is not accepted
+ * here or in the codec: the dashboard is the only surface allowed to open it.
+ * OK means the request left the device. */
+int remote_ctrl_channel_set_mode(const char* mode);
+
+/* Session chain (rnew / ruse): request the listing, open a fresh generation,
+ * or switch to a generation number. All three are request-only — the gateway
+ * answers with a `session_list` frame, delivered as REMOTE_EVENT_SESSIONS. */
+int remote_ctrl_channel_request_sessions(void);
+int remote_ctrl_channel_new_session(void);
+int remote_ctrl_channel_switch_session(const char* target);
+/* Copies the cached listing + the current generation for console display. */
+int remote_ctrl_channel_session_view(char* list_out, size_t list_size,
+    char* current_out, size_t current_size);
+
 /* Answers a pending permission request from the remote agent.
  *
  * HUMAN INPUT ONLY. Reached from the NSH commands and, later, a GPIO key. This
