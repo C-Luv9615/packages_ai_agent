@@ -102,6 +102,13 @@ int lvgl_ui_channel_set_ptt(int state);
  * 5=error。 */
 int lvgl_ui_channel_set_pet_state(int state);
 
+/* 切换圆屏差异化页前台（M7 ① pet / ② particle）。page:
+ *   0 = 宠物状态环首屏 (pet_status_view)
+ *   1 = 粒子流差异化页 (particle_flow_view)
+ * 聊天气泡屏由 send/send_user 自动抢占、空闲自动让位回宠物屏，故不在此列。
+ * 经 lv_async_call 在 LVGL 线程执行；返回 0 成功，-ENOSYS 表示该页未编入。 */
+int lvgl_ui_channel_set_page(int page);
+
 #ifdef __cplusplus
 }
 #endif

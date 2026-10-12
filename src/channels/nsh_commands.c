@@ -189,6 +189,7 @@ static void cmd_help(void)
 #if defined(CONFIG_AI_AGENT_LVGL_UI) || defined(CONFIG_AI_AGENT_UI_RPMSG)
         "  show_chat            - Show chat UI on screen\n"
         "  set_pet <0-5>        - Drive pet to a state (debug; 0=idle 1=listen 2=think 3=exec 4=wait 5=err)\n"
+        "  set_page <0|1>       - Switch round-screen page (0=pet home, 1=particle flow)\n"
 #endif
 #ifdef CONFIG_AI_AGENT_NET_RPMSG
         "  net_diag [ping|http] <target>  Network diagnostics\n"
@@ -1277,6 +1278,10 @@ static void* cli_thread(void* arg)
          * a network/LLM round-trip. pet_status_view.h: enum pet_state. */
         else if (strcmp(cmd, "set_pet") == 0 && argc >= 2)
             lvgl_ui_channel_set_pet_state(atoi(argv[1]));
+        /* Debug: switch the round-screen 差异化 page foreground.
+         * 0 = pet status ring home screen, 1 = particle flow visualizer. */
+        else if (strcmp(cmd, "set_page") == 0 && argc >= 2)
+            lvgl_ui_channel_set_page(atoi(argv[1]));
 #endif
 #ifdef CONFIG_AI_AGENT_TEST
         else if (strcmp(cmd, "claw_test") == 0)
