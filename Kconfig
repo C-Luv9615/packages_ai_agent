@@ -102,6 +102,20 @@ config AI_AGENT_LVGL_UI
 		Provides a chat-bubble interface on a round watch screen
 		with PTT (Push-to-Talk) voice input.
 
+config AI_AGENT_UI_RPMSG
+	bool "Drive the CP-side UI over RPMsg (路 B dual-core)"
+	default n
+	depends on RPTUN
+	---help---
+		On dual-core BK7258 (路 B): the AP runs the agent (LLM/voice/
+		TLS) but has no LCD/LVGL/FPU.  This compiles a thin shim
+		(ui_rpmsg_client.c) that implements the lvgl_ui_channel_* +
+		lvgl_toast_* API as RPMsg messages to the CP core, which owns
+		the LCD and renders the bubbles/toasts (ui_rpmsg_server.c).
+		The agent's call sites are unchanged (same guard as
+		AI_AGENT_LVGL_UI).  TTS still runs locally on AP via
+		voice_channel_speak(); only the bubble render crosses the link.
+
 config AI_AGENT_FEISHU
 	bool "Enable Feishu bot channel"
 	default y
@@ -366,7 +380,7 @@ config AI_AGENT_TOOLS_QUICKAPP
 config AI_AGENT_NOTIFY_SERVICE
 	bool "Enable Gerrit/Jira notify polling → LVGL toast"
 	default n
-	depends on AI_AGENT_LVGL_UI
+	depends on AI_AGENT_LVGL_UI || AI_AGENT_UI_RPMSG
 	depends on AI_AGENT_MCP
 	---help---
 		Background polling service that periodically queries
@@ -420,5 +434,37 @@ config AI_AGENT_REST_API
 		Enable HTTP REST API endpoints accessible via WebSocket
 		server for remote configuration, skill management, and
 		log retrieval from Android companion App.
+
+endif
+
+#----------------------------------------------------------------------------
+# CP-side UI renderer (路 B). Independent of EXAMPLES_AI_AGENT_VELA so the
+# CP core can render the chat UI without pulling agent_main/llm/voice/TLS.
+#----------------------------------------------------------------------------
+config EXAMPLES_AI_AGENT_UI_CP
+	bool "AI Agent UI (CP-side render only)"
+	default n
+	depends on GRAPHICS_LVGL
+	---help---
+		CP-core UI renderer: builds only the LVGL chat-view assets
+		(lvgl_ui_channel + lvgl_toast + MiSans CJK font) into a
+		standalone NSH builtin, without agent_main/llm/voice/TLS.
+		voice_channel_* and message_bus are stubbed on this side (CP
+		only renders; TTS/ASR live on AP). Launch from CP NSH; the
+		AP->CP UI RPMsg endpoint will be wired in a follow-up slice.
+
+if EXAMPLES_AI_AGENT_UI_CP
+
+config EXAMPLES_AI_AGENT_UI_CP_PROGNAME
+	string "Program name"
+	default "ai_agent_ui"
+
+config EXAMPLES_AI_AGENT_UI_CP_PRIORITY
+	int "UI task priority"
+	default 100
+
+config EXAMPLES_AI_AGENT_UI_CP_STACKSIZE
+	int "UI task stack size"
+	default 32768
 
 endif

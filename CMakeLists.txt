@@ -108,6 +108,18 @@ if(CONFIG_EXAMPLES_AI_AGENT_VELA)
     list(APPEND AGENT_SRCS src/ui/lv_font_misans_16_cjk.c)
   endif()
 
+  # 路 B (dual-core BK7258): the AP runs the agent but has no LCD/LVGL/FPU.
+  # Instead of building bubbles locally, a thin shim (ui_rpmsg_client.c)
+  # implements the SAME lvgl_ui_channel_* / lvgl_toast_* API as RPMsg
+  # messages to the CP core, where ui_rpmsg_server.c renders them.  Call
+  # sites are guarded with
+  #   #if defined(CONFIG_AI_AGENT_LVGL_UI) || defined(CONFIG_AI_AGENT_UI_RPMSG)
+  # so agent_main.c / nsh_commands.c / remote_ctrl_channel.c /
+  # notify_service.c compile unchanged on both cores.
+  if(CONFIG_AI_AGENT_UI_RPMSG)
+    list(APPEND AGENT_SRCS src/ui/ui_rpmsg_client.c)
+  endif()
+
   if(CONFIG_AI_AGENT_NOTIFY_SERVICE)
     list(APPEND AGENT_SRCS src/infra/notify_service.c)
   endif()
@@ -243,6 +255,54 @@ if(CONFIG_EXAMPLES_AI_AGENT_VELA)
     COMMAND ${CMAKE_COMMAND} -E touch
       ${CMAKE_CURRENT_SOURCE_DIR}/src/agent_main.c
     COMMENT "Refreshing AI Agent build timestamp"
+  )
+
+endif()
+
+################################################################################
+# CP-side UI renderer (路 B). Independent of EXAMPLES_AI_AGENT_VELA so the
+# CP core can render the chat UI without agent_main/llm/voice/TLS. Builds
+# only the LVGL chat-view assets; voice_channel_* + message_bus are stubbed
+# (src/ui_cp/cp_stubs.c). The AP->CP UI RPMsg server will be added here next.
+################################################################################
+if(CONFIG_EXAMPLES_AI_AGENT_UI_CP)
+
+  # NOTE: lv_font_misans_16_cjk.c is NOT listed here. The canonical font
+  # lives in the LVGL tree (apps/graphics/lvgl/.../font/) and is compiled into
+  # liblvgl.a when CONFIG_LV_FONT_MISANS_16_CJK=y (set in the CP defconfig).
+  # We only LV_FONT_DECLARE + reference &lv_font_misans_16_cjk from
+  # lvgl_ui_channel.c; the symbol is provided by the LVGL lib at link time,
+  # the same way the built-in Montserrat fonts are consumed.
+  set(AI_AGENT_UI_CP_SRCS
+    src/ui_cp/cp_ui_main.c
+    src/ui_cp/cp_stubs.c
+    src/ui_cp/ui_rpmsg_server.c
+    src/ui/lvgl_ui_channel.c
+    src/ui/lvgl_toast.c
+  )
+
+  # The shared UI sources (lvgl_ui_channel.c / lvgl_toast.c / agent_config.h)
+  # gate their real implementations behind CONFIG_AI_AGENT_LVGL_UI.  On the AP
+  # that symbol comes from the VELA Kconfig; the CP app does not build the full
+  # agent so we define it here instead, making the shared UI subset compile the
+  # SAME real code on both cores (stubs in cp_stubs.c cover the voice/bus calls
+  # that only exist on AP).
+  nuttx_add_application(
+    NAME
+      ${CONFIG_EXAMPLES_AI_AGENT_UI_CP_PROGNAME}
+    SRCS
+      ${AI_AGENT_UI_CP_SRCS}
+    INCLUDE_DIRECTORIES
+      include
+      src
+    DEFINITIONS
+      CONFIG_AI_AGENT_LVGL_UI
+    DEPENDS
+      lvgl
+    STACKSIZE
+      ${CONFIG_EXAMPLES_AI_AGENT_UI_CP_STACKSIZE}
+    PRIORITY
+      ${CONFIG_EXAMPLES_AI_AGENT_UI_CP_PRIORITY}
   )
 
 endif()

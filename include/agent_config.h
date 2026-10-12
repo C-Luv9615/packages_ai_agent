@@ -302,6 +302,14 @@
 #ifdef CONFIG_AI_AGENT_LVGL_UI
 #define AGENT_CHAN_LVGL_UI "lvgl_ui"
 #endif
+#ifdef CONFIG_AI_AGENT_UI_RPMSG
+/* 路 B: AP drives the CP-side UI over RPMsg.  Same channel name so the
+ * agent's routing logic is identical to the local-LVGL path; the only
+ * difference is the link-time implementation of lvgl_ui_channel_*. */
+#ifndef AGENT_CHAN_LVGL_UI
+#define AGENT_CHAN_LVGL_UI "lvgl_ui"
+#endif
+#endif
 
 /* ── Notify Service (Gerrit/Jira background polling → toast popup) ── */
 #ifdef CONFIG_AI_AGENT_NOTIFY_SERVICE

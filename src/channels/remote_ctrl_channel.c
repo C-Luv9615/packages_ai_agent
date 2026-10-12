@@ -24,7 +24,7 @@
 #include "remote/remote_link_mqtt.h"
 #include "voice/voice_channel.h"
 
-#ifdef CONFIG_AI_AGENT_LVGL_UI
+#if defined(CONFIG_AI_AGENT_LVGL_UI) || defined(CONFIG_AI_AGENT_UI_RPMSG)
 #include "ui/lvgl_toast.h"
 #endif
 
@@ -121,7 +121,7 @@ static void on_session_event(void* context, enum remote_event_e event,
             syslog(LOG_INFO, "[%s] %s %s\n", TAG, tag, body);
             notify_observer_state(text);
         }
-#ifdef CONFIG_AI_AGENT_LVGL_UI
+#if defined(CONFIG_AI_AGENT_LVGL_UI) || defined(CONFIG_AI_AGENT_UI_RPMSG)
         /* A permission request parks the turn until a human decides, and the
          * console log line is easy to miss — surface it on the toast the
          * notify service uses, naming the two human-only commands. */
@@ -175,7 +175,7 @@ static void on_session_event(void* context, enum remote_event_e event,
             }
             g_mirror_turn = false;
         }
-#ifdef CONFIG_AI_AGENT_LVGL_UI
+#if defined(CONFIG_AI_AGENT_LVGL_UI) || defined(CONFIG_AI_AGENT_UI_RPMSG)
         /* A remote coding turn runs for minutes and the user walked away —
          * the approval toast (above) already owns the "needs you" case; this
          * one says the wait is over. Voice is already covered by the mirror

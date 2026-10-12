@@ -77,7 +77,7 @@
 #ifdef CONFIG_AI_AGENT_WEIXIN
 #include "channels/weixin_channel.h"
 #endif
-#ifdef CONFIG_AI_AGENT_LVGL_UI
+#if defined(CONFIG_AI_AGENT_LVGL_UI) || defined(CONFIG_AI_AGENT_UI_RPMSG)
 #include "ui/lvgl_ui_channel.h"
 #endif
 #ifdef CONFIG_AI_AGENT_NOTIFY_SERVICE
@@ -430,7 +430,7 @@ static void* outbound_dispatch_task(void* arg)
                     s_voice_cooldown_until = time(NULL) + 5;
                 }
             }
-#ifdef CONFIG_AI_AGENT_LVGL_UI
+#if defined(CONFIG_AI_AGENT_LVGL_UI) || defined(CONFIG_AI_AGENT_UI_RPMSG)
         } else if (strcmp(msg.channel, AGENT_CHAN_LVGL_UI) == 0) {
             int uret = lvgl_ui_channel_send(msg.content);
             if (uret != 0) {
@@ -477,7 +477,6 @@ static void* outbound_dispatch_task(void* arg)
             printf("\n[Agent]: %s\nvela> ", msg.content);
             fflush(stdout);
             pthread_mutex_unlock(&g_stdout_lock);
-
             /* One printer only.  This syslog line used to carry the full
              * reply a second time, and on a board where syslog shares the
              * console the user saw the answer twice.  Log the shape of it
@@ -486,7 +485,7 @@ static void* outbound_dispatch_task(void* arg)
 
             syslog(LOG_INFO, "[agent] reply %u bytes\n",
                 (unsigned)strlen(msg.content));
-#ifdef CONFIG_AI_AGENT_LVGL_UI
+#if defined(CONFIG_AI_AGENT_LVGL_UI) || defined(CONFIG_AI_AGENT_UI_RPMSG)
             /* Mirror CLI replies to the LVGL UI so that `ask` responses
              * (which come in on the "cli" channel) also render as chat
              * cards on screen, not only as terminal text.  send() shows
@@ -658,7 +657,7 @@ int ai_agent_main(int argc, char* argv[])
         BOOT_LOG_RC(&t0, "P3", "weixin_channel_init", rc);
 #endif
 
-#ifdef CONFIG_AI_AGENT_LVGL_UI
+#if defined(CONFIG_AI_AGENT_LVGL_UI) || defined(CONFIG_AI_AGENT_UI_RPMSG)
         rc = lvgl_ui_channel_init();
         BOOT_LOG_RC(&t0, "P3", "lvgl_ui_channel_init", rc);
 #endif
@@ -710,7 +709,7 @@ int ai_agent_main(int argc, char* argv[])
     heartbeat_start();
     BOOT_LOG(&t0, "P5", "cron + heartbeat started");
 
-#ifdef CONFIG_AI_AGENT_LVGL_UI
+#if defined(CONFIG_AI_AGENT_LVGL_UI) || defined(CONFIG_AI_AGENT_UI_RPMSG)
     if (lvgl_ui_channel_start() != OK)
         syslog(LOG_WARNING, "[%s] lvgl_ui_channel_start failed\n", TAG);
     BOOT_LOG(&t0, "P5", "lvgl_ui_channel started");
@@ -804,7 +803,7 @@ int ai_agent_main(int argc, char* argv[])
      * the network sockets are closed below, or they can check
      * agent_shutdown_requested() in their loops. */
 
-#ifdef CONFIG_AI_AGENT_LVGL_UI
+#if defined(CONFIG_AI_AGENT_LVGL_UI) || defined(CONFIG_AI_AGENT_UI_RPMSG)
     lvgl_ui_channel_stop();
 #endif
 

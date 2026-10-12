@@ -52,7 +52,7 @@
 #include "tools/skill_sync.h"
 #endif
 
-#ifdef CONFIG_AI_AGENT_LVGL_UI
+#if defined(CONFIG_AI_AGENT_LVGL_UI) || defined(CONFIG_AI_AGENT_UI_RPMSG)
 #include "ui/lvgl_ui_channel.h"
 #endif
 
@@ -186,7 +186,7 @@ static void cmd_help(void)
         "  notify_stop           - Stop background polling\n"
         "  notify_inject <g|j> <key> <text> - Pop a test toast (gerrit/jira)\n"
 #endif
-#ifdef CONFIG_AI_AGENT_LVGL_UI
+#if defined(CONFIG_AI_AGENT_LVGL_UI) || defined(CONFIG_AI_AGENT_UI_RPMSG)
         "  show_chat            - Show chat UI on screen\n"
 #endif
 #ifdef CONFIG_AI_AGENT_NET_RPMSG
@@ -264,15 +264,16 @@ static void cmd_net_diag(int argc, char** argv)
     }
 
     if (strcmp(argv[1], "ping") == 0 && argc >= 3) {
-#ifdef CONFIG_SYSTEM_POPEN
-        char cmd[128];
-        snprintf(cmd, sizeof(cmd), "ping -c 3 %s", argv[2]);
-        system(cmd);
+        /* NuttX does not provide libc system() unless CONFIG_SYSTEM_SYSTEM
+         * is enabled; call the ping builtin's entry directly instead of
+         * shelling out, so this diagnostic links without that dependency. */
+#ifdef CONFIG_SYSTEM_PING
+        extern int ping_main(int argc, FAR char *argv[]);
+        FAR char *pargs[] = {"ping", "-c", "3", argv[2], NULL};
+        ping_main(4, pargs);
 #else
-        /* No shell to spawn on this config (flat NuttX); the operator
-         * can run the ping command directly in the console instead. */
-        printf("ping: run 'ping %s' from the shell (no system() here)\n",
-            argv[2]);
+        printf("ping builtin off (CONFIG_SYSTEM_PING); run at NSH: ping -c 3 %s\n",
+               argv[2]);
 #endif
     } else if (strcmp(argv[1], "http") == 0 && argc >= 3) {
         printf("HTTP HEAD %s ...\n", argv[2]);
@@ -1267,7 +1268,7 @@ static void* cli_thread(void* arg)
         else if (strcmp(cmd, "notify_inject") == 0)
             cmd_notify_inject(argc, argv);
 #endif
-#ifdef CONFIG_AI_AGENT_LVGL_UI
+#if defined(CONFIG_AI_AGENT_LVGL_UI) || defined(CONFIG_AI_AGENT_UI_RPMSG)
         else if (strcmp(cmd, "show_chat") == 0)
             lvgl_ui_channel_show();
 #endif
