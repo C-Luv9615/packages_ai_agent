@@ -290,6 +290,11 @@ static chat_msg_t* chat_history_add(chat_history_t* h, const char* text, bool is
 /* ── Public API stubs (filled in by later tasks) ──────────────── */
 
 #ifdef CONFIG_AI_AGENT_PET_STATUS
+#if defined(CONFIG_AI_AGENT_PARTICLE_FLOW)
+/* Forward decl: pet_idle_reset (below) calls this to pause rotation; the
+ * full rotate block follows the pet idle section. */
+static void rotate_idle_reset(void);
+#endif
 /* Idle-yield support: when the pet status ring is enabled, the chat screen
  * yields the foreground to the pet after PET_IDLE_YIELD_MS of message silence.
  * All access is confined to the LVGL thread (init creates the timer; the send
@@ -316,9 +321,52 @@ static void pet_idle_timer_cb(lv_timer_t *t)
 static void pet_idle_reset(void)
 {
     s_pet_last_msg_tick = lv_tick_get();
+    rotate_idle_reset();   /* a live message pauses idle page rotation */
 }
 #else
 static void pet_idle_reset(void) {}
+#endif
+
+#if defined(CONFIG_AI_AGENT_PET_STATUS) && defined(CONFIG_AI_AGENT_PARTICLE_FLOW)
+/* Idle auto-rotate between the two 差异化 pages (M7 ① pet / ② particle).
+ * When the agent is idle (state==IDLE) and no chat is visible, alternate
+ * the foreground between the pet home screen and the particle flow every
+ * ROTATE_INTERVAL_MS so a demo shows both round-screen pages without a
+ * manual set_page.  Any non-idle state or incoming chat message pauses
+ * rotation (reset the tick), since those have their own pet animation or
+ * preempt the foreground.  Mirrors UI方案.md §2.4 "agent 空闲态自动切". */
+#define ROTATE_INTERVAL_MS  10000
+static lv_timer_t *s_rotate_timer = NULL;
+static uint32_t    s_rotate_last_switch_tick = 0;
+static int         s_last_pet_state = 0;   /* mirrored in set_pet_state */
+
+static void rotate_idle_reset(void)
+{
+    s_rotate_last_switch_tick = lv_tick_get();
+}
+
+static void rotate_timer_cb(lv_timer_t *t)
+{
+    (void)t;
+    if (!s_state.initialized) return;
+    if (s_state.screen_visible) return;        /* chat holds the foreground */
+    if (s_last_pet_state != 0) return;         /* only idle rotates */
+    uint32_t now = lv_tick_get();
+    if ((now - s_rotate_last_switch_tick) < ROTATE_INTERVAL_MS) return;
+    if (pet_status_view_is_visible())
+      {
+        lvgl_ui_channel_set_page(1);
+        syslog(LOG_INFO, "[%s] idle rotate → particle\n", TAG);
+      }
+    else if (particle_flow_view_is_visible())
+      {
+        lvgl_ui_channel_set_page(0);
+        syslog(LOG_INFO, "[%s] idle rotate → pet\n", TAG);
+      }
+    s_rotate_last_switch_tick = now;
+}
+#else
+static void rotate_idle_reset(void) {}
 #endif
 
 int lvgl_ui_channel_init(void)
@@ -546,6 +594,17 @@ int lvgl_ui_channel_init(void)
      * the cold-start home screen; the particle page is reached via set_page 1).
      * Init here so it is ready to show without a per-call create latency. */
     (void)particle_flow_view_init();
+#endif
+#if defined(CONFIG_AI_AGENT_PET_STATUS) && defined(CONFIG_AI_AGENT_PARTICLE_FLOW)
+    /* Idle auto-rotate between pet ① and particle ② (UI方案.md §2.4).
+     * 1 s period polls the idle condition; the cb self-throttles to
+     * ROTATE_INTERVAL_MS between actual switches. */
+    s_rotate_timer = lv_timer_create(rotate_timer_cb, 1000, NULL);
+    if (s_rotate_timer)
+      {
+        lv_timer_set_repeat_count(s_rotate_timer, -1);
+      }
+    rotate_idle_reset();
 #endif
     return 0;
 
@@ -987,6 +1046,11 @@ int lvgl_ui_channel_set_pet_state(int state)
     rc = 0;
 #endif
     (void)rc;
+    if (state != s_last_pet_state)
+      {
+        s_last_pet_state = state;
+        rotate_idle_reset();   /* state change restarts the idle-rotate countdown */
+      }
     return rc;
 }
 
