@@ -232,6 +232,64 @@ int lvgl_ui_channel_send(const char *text)
   return ret;
 }
 
+/* Extended send: bubble with an explicit card bar color (0=auto).  Like
+ * send(), TTS plays locally on AP (voice_channel_speak) and only the
+ * colored bubble goes to CP. */
+int lvgl_ui_channel_send_ex(const char *text, uint32_t bar_color)
+{
+  struct ui_rpmsg_msg m;
+  size_t tlen, plen;
+  int ret;
+
+  if (text == NULL)
+    {
+      return -EINVAL;
+    }
+  (void)voice_channel_speak(text);
+
+  memset(&m, 0, sizeof(m));
+  m.op = UI_RPMSG_SEND_EX;
+
+  /* payload = [bar_color:u32le][text..] */
+  uint32_t *hdr = (uint32_t *)m.payload;
+  hdr[0] = bar_color;
+  plen = sizeof(uint32_t);
+
+  tlen = strlen(text);
+  if (tlen > UI_RPMSG_MAX_TEXT - plen)
+    {
+      tlen = UI_RPMSG_MAX_TEXT - plen;
+    }
+  memcpy(m.payload + plen, text, tlen);
+  m.payload_len = (uint16_t)(plen + tlen);
+
+  ret = ui_rpmsg_send(&m);
+  if (ret < 0)
+    {
+      syslog(LOG_WARNING, "[%s] send_ex bubble to CP failed: %d\n", TAG, ret);
+    }
+  return ret;
+}
+
+/* Drive the CP PTT button state from the AP voice pipeline. */
+int lvgl_ui_channel_set_ptt(int state)
+{
+  struct ui_rpmsg_msg m;
+  int ret;
+
+  memset(&m, 0, sizeof(m));
+  m.op = UI_RPMSG_SET_PTT;
+  m.payload[0] = (uint8_t)state;
+  m.payload_len = 1;
+
+  ret = ui_rpmsg_send(&m);
+  if (ret < 0)
+    {
+      syslog(LOG_WARNING, "[%s] set_ptt to CP failed: %d\n", TAG, ret);
+    }
+  return ret;
+}
+
 void lvgl_toast_show_async(const char *title, const char *body,
                            uint32_t bar_color, uint32_t duration_ms)
 {

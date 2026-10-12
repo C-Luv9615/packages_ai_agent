@@ -16,6 +16,8 @@
 
 #pragma once
 
+#include <stdint.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -56,6 +58,33 @@ void lvgl_ui_channel_show(void);
  * @return 0 成功，负值表示错误
  */
 int lvgl_ui_channel_send(const char* text);
+
+/**
+ * 发送 Agent 回复到 UI（扩展版）：显式指定卡片左侧色条颜色。
+ * bar_color=0 → 沿用 chat_view_classify_reply 启发式自动分类（与 send 等价）。
+ * 非 0 → 用指定颜色覆盖分类（绿=结论/蓝=结构化/橙=jira/灰=普通，见
+ * LVGL_UI_CARD_COLOR_* 宏）。其余行为（自动显屏、async 调度、TTS）同 send。
+ *
+ * @param text      UTF-8 文本，Agent 回复内容
+ * @param bar_color 色条颜色，0=自动分类
+ * @return 0 成功，负值表示错误
+ */
+int lvgl_ui_channel_send_ex(const char* text, uint32_t bar_color);
+
+/* PTT 按钮状态机，可由外部（AP 经 RPMsg）驱动，反映语音管线阶段。 */
+enum lvgl_ui_ptt_state {
+    LVGL_UI_PTT_IDLE       = 0,  /* 空闲：恢复默认按钮样式，隐藏指示器 */
+    LVGL_UI_PTT_RECORDING = 1,  /* 录音中：按钮红+脉冲，指示器"录音中..." */
+    LVGL_UI_PTT_PROCESSING = 2, /* 识别中：停止脉冲，指示器"识别中..." */
+};
+
+/**
+ * 设置 PTT 按钮状态（录音中/识别中/空闲）。线程安全：通过 lv_async_call
+ * 调度到 LVGL 线程执行，避免跨核/跨线程动 widget。
+ * @param state  enum lvgl_ui_ptt_state
+ * @return 0 成功，负值表示错误
+ */
+int lvgl_ui_channel_set_ptt(int state);
 
 #ifdef __cplusplus
 }

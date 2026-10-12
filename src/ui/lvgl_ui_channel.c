@@ -179,11 +179,13 @@ static void* lv_loop_thread(void* arg)
 typedef struct {
     char text[LVGL_UI_MSG_MAX_LEN];
     bool is_user;
+    uint32_t bar_color;   /* 0 = auto-classify via chat_view_classify_reply */
 } async_msg_t;
 
 /* ── Forward declarations ─────────────────────────────────── */
 
-static void chat_view_add_message(const char* text, bool is_user);
+static void chat_view_add_message(const char* text, bool is_user,
+                                  uint32_t bar_color);
 static void chat_view_add_message_async_cb(void* data);
 static void chat_view_scroll_to_bottom(void);
 static void chat_view_trim_history(void);
@@ -686,11 +688,11 @@ static void show_screen_async_cb(void* data)
      * color-bar variants render on a single show_chat.  Remove the
      * -DLVGL_UI_CARD_SELFTEST define to disable. */
     syslog(LOG_INFO, "[%s] CARD_SELFTEST: injecting sample cards\n", TAG);
-    chat_view_add_message("这个提交已 MERGED,状态: 正常合入", false);
-    chat_view_add_message("Jira issue FEEDBACK-149182,经办人: 张文海,More Info", false);
-    chat_view_add_message("值得合入,建议采纳,yes", false);
-    chat_view_add_message("这是一条普通回复,用于展示默认灰色色条", false);
-    chat_view_add_message("你好,这是一条用户消息", true);
+    chat_view_add_message("这个提交已 MERGED,状态: 正常合入", false, 0);
+    chat_view_add_message("Jira issue FEEDBACK-149182,经办人: 张文海,More Info", false, 0);
+    chat_view_add_message("值得合入,建议采纳,yes", false, 0);
+    chat_view_add_message("这是一条普通回复,用于展示默认灰色色条", false, 0);
+    chat_view_add_message("你好,这是一条用户消息", true, 0);
 #endif
 }
 
@@ -758,7 +760,103 @@ int lvgl_ui_channel_send(const char* text)
     return 0;
 }
 
-/* ── Async callback for LVGL thread ────────────────────────── */
+/* Extended send: same as send() but lets the caller pin the card left-bar
+ * color (0 = keep the heuristic classifier).  Used by the AP→CP UI RPMsg
+ * SEND_EX path when the agent already knows the reply category. */
+int lvgl_ui_channel_send_ex(const char* text, uint32_t bar_color)
+{
+    async_msg_t* payload;
+
+    if (!text || text[0] == '\0') {
+        syslog(LOG_ERR, "[%s] send_ex: invalid text\n", TAG);
+        return -EINVAL;
+    }
+    if (!s_state.initialized || !s_state.running) {
+        syslog(LOG_ERR, "[%s] send_ex: channel not ready\n", TAG);
+        return -EINVAL;
+    }
+
+    if (!s_state.screen_visible) {
+        lvgl_ui_channel_show();
+    }
+
+    payload = malloc(sizeof(async_msg_t));
+    if (!payload) {
+        syslog(LOG_ERR, "[%s] send_ex: payload alloc failed\n", TAG);
+        return -ENOMEM;
+    }
+    chat_view_copy_text(payload->text, text, LVGL_UI_MSG_MAX_LEN);
+    payload->is_user = false;
+    payload->bar_color = bar_color;
+
+    lv_async_call(chat_view_add_message_async_cb, payload);
+    return 0;
+}
+
+/* ── External PTT state (AP→CP RPMsg SET_PTT) ─────────────────── */
+
+/* Heap-allocated state for async set_ptt (single int fits in a void* but
+ * keep a small struct for clarity/future fields). */
+typedef struct {
+    int state;
+} async_ptt_t;
+
+static void set_ptt_async_cb(void* data)
+{
+    async_ptt_t* p = (async_ptt_t*)data;
+    if (!p) {
+        return;
+    }
+    if (!s_state.initialized || !s_state.running) {
+        free(p);
+        return;
+    }
+
+    switch (p->state) {
+    case LVGL_UI_PTT_RECORDING:
+        s_state.is_recording = true;
+        s_state.is_processing = false;
+        recording_indicator_start();
+        break;
+    case LVGL_UI_PTT_PROCESSING:
+        s_state.is_recording = false;
+        s_state.is_processing = true;
+        recording_indicator_show_processing();
+        break;
+    case LVGL_UI_PTT_IDLE:
+    default:
+        s_state.is_recording = false;
+        s_state.is_processing = false;
+        recording_indicator_stop();
+        break;
+    }
+    free(p);
+}
+
+int lvgl_ui_channel_set_ptt(int state)
+{
+    async_ptt_t* payload;
+
+    if (!s_state.initialized || !s_state.running) {
+        return -EINVAL;
+    }
+    /* Coerce unknown values to IDLE. */
+    if (state != LVGL_UI_PTT_IDLE && state != LVGL_UI_PTT_RECORDING &&
+        state != LVGL_UI_PTT_PROCESSING) {
+        state = LVGL_UI_PTT_IDLE;
+    }
+
+    payload = malloc(sizeof(async_ptt_t));
+    if (!payload) {
+        syslog(LOG_ERR, "[%s] set_ptt: payload alloc failed\n", TAG);
+        return -ENOMEM;
+    }
+    payload->state = state;
+    lv_async_call(set_ptt_async_cb, payload);
+    return 0;
+}
+
+
 
 /* Called by lv_timer_handler() inside the LVGL thread.
  * Safe to create/modify LVGL objects here. */
@@ -775,7 +873,7 @@ static void chat_view_add_message_async_cb(void* data)
         return;
     }
 
-    chat_view_add_message(payload->text, payload->is_user);
+    chat_view_add_message(payload->text, payload->is_user, payload->bar_color);
     free(payload);
     payload = NULL;
 }
@@ -916,7 +1014,8 @@ static void chat_view_build_agent_card(lv_obj_t* bubble, const char* text,
     lv_obj_set_flex_grow(body_lbl, 1);
 }
 
-static void chat_view_add_message(const char* text, bool is_user)
+static void chat_view_add_message(const char* text, bool is_user,
+                                  uint32_t bar_color)
 {
     chat_history_t* h = &s_state.history;
     chat_msg_t* slot;
@@ -982,8 +1081,8 @@ static void chat_view_add_message(const char* text, bool is_user)
         lv_obj_set_width(lbl, lv_pct(100));
     } else {
         /* Agent bubble: enhanced card (title bar + divider + color bar + body) */
-        uint32_t bar_color = chat_view_classify_reply(slot->text);
-        chat_view_build_agent_card(bubble, slot->text, bar_color);
+        uint32_t color = bar_color ? bar_color : chat_view_classify_reply(slot->text);
+        chat_view_build_agent_card(bubble, slot->text, color);
     }
 
     slot->bubble = bubble;
@@ -1025,7 +1124,7 @@ static void ptt_btn_event_cb(lv_event_t* e)
         if (ret != 0) {
             syslog(LOG_ERR, "[%s] voice_channel_start failed (rc=%d)\n", TAG, ret);
             pthread_mutex_unlock(&s_state.lock);
-            chat_view_add_message("录音启动失败", false);
+            chat_view_add_message("录音启动失败", false, 0);
             return;
         }
 
@@ -1054,7 +1153,7 @@ static void ptt_btn_event_cb(lv_event_t* e)
         }
 
         if (asr_text[0] == '\0') {
-            chat_view_add_message("未识别到语音", false);
+            chat_view_add_message("未识别到语音", false, 0);
             goto done;
         }
 
@@ -1065,7 +1164,7 @@ static void ptt_btn_event_cb(lv_event_t* e)
          */
 
         voice_channel_dispatch(asr_text);
-        chat_view_add_message(asr_text, true);
+        chat_view_add_message(asr_text, true, 0);
 
     done:
         pthread_mutex_lock(&s_state.lock);

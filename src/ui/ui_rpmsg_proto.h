@@ -69,6 +69,12 @@ enum ui_rpmsg_op {
     UI_RPMSG_SHOW   = 4,  /* bring chat screen to foreground */
     UI_RPMSG_SEND   = 5,  /* add a chat bubble: payload = UTF-8 agent reply text */
     UI_RPMSG_TOAST  = 6,  /* transient toast: payload = title\0body + color + dur */
+    UI_RPMSG_SEND_EX = 7, /* bubble w/ explicit card bar color:
+                           * [bar_color:u32le][text..] (text not NUL-term).
+                           * bar_color=0 → CP auto-classifies (same as SEND). */
+    UI_RPMSG_SET_PTT = 8, /* drive PTT button state from AP:
+                           * payload[0] = enum lvgl_ui_ptt_state
+                           * (0=idle,1=recording,2=processing). */
 };
 
 /** Fixed wire format (packed, little-endian on both M-class cores). */
@@ -77,9 +83,13 @@ struct ui_rpmsg_msg {
     uint8_t  reserved;      /* zero on send, reserved for future flags */
     uint16_t payload_len;   /* valid bytes in payload[] (0 for INIT/START/STOP/SHOW) */
     /** Op-specific payload.
-     *   SEND : payload[0..payload_len-1] = UTF-8 text (len, not NUL-terminated).
-     *   TOAST: payload = [bar_color:u32le][duration_ms:u32le][title\0body\0].
-     *          payload_len covers all of the above.
+     *   SEND    : payload[0..payload_len-1] = UTF-8 text (len, not NUL-terminated).
+     *   TOAST   : payload = [bar_color:u32le][duration_ms:u32le][title\0body\0].
+     *             payload_len covers all of the above.
+     *   SEND_EX : payload = [bar_color:u32le][text..] (text len, not NUL-term);
+     *             payload_len covers the u32 + text.
+     *   SET_PTT : payload[0] = PTT state (0 idle,1 recording,2 processing);
+     *             payload_len = 1.
      *   INIT/START/STOP/SHOW: payload_len = 0.
      */
     uint8_t  payload[UI_RPMSG_MAX_PAYLOAD];

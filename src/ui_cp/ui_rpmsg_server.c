@@ -124,6 +124,37 @@ static int ui_rpmsg_server_rx(struct rpmsg_endpoint *ept, void *data,
         }
         break;
 
+      case UI_RPMSG_SEND_EX:
+        {
+          /* payload = [bar_color:u32le][text..] (text not NUL-terminated). */
+          if (m->payload_len < sizeof(uint32_t))
+            {
+              break;
+            }
+          uint32_t bar_color;
+          memcpy(&bar_color, m->payload, sizeof(uint32_t));
+          size_t tl = m->payload_len - sizeof(uint32_t);
+          char text[UI_RPMSG_MAX_TEXT + 1];
+          if (tl > UI_RPMSG_MAX_TEXT)
+            {
+              tl = UI_RPMSG_MAX_TEXT;
+            }
+          memcpy(text, m->payload + sizeof(uint32_t), tl);
+          text[tl] = '\0';
+          (void)lvgl_ui_channel_send_ex(text, bar_color);
+        }
+        break;
+
+      case UI_RPMSG_SET_PTT:
+        {
+          if (m->payload_len < 1)
+            {
+              break;
+            }
+          (void)lvgl_ui_channel_set_ptt((int)m->payload[0]);
+        }
+        break;
+
       case UI_RPMSG_TOAST:
         {
           if (m->payload_len < 2 * sizeof(uint32_t))
