@@ -222,9 +222,12 @@ static void on_session_event(void* context, enum remote_event_e event,
         break;
 
     case REMOTE_EVENT_SESSIONS:
-        /* The whole listing in one record, like the reply block: nx_vsyslog
-         * stamps its prefix once per call, so the list reads as a block. */
-        syslog(LOG_INFO, "[remote_ctrl] sessions:\n%s", text != NULL ? text : "");
+        /* One write for the whole block (header + rows + footer included), so
+         * it lands exactly like `rstat`'s box. The cached copy is never
+         * printed by the command — this is the single print site. */
+        if (text != NULL && text[0] != '\0') {
+            printf("%s", text);
+        }
         break;
 
     default:

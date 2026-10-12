@@ -500,13 +500,16 @@ bool remote_session_switch_session(struct remote_session_s* session,
 }
 
 void remote_session_sessions(struct remote_session_s* session,
-    const char* text)
+    const char* text, const char* current)
 {
     if (session == NULL || text == NULL) {
         return;
     }
     pthread_mutex_lock(&session->lock);
     snprintf(session->session_list_text, sizeof(session->session_list_text), "%s", text);
+    if (current != NULL && current[0] != '\0') {
+        snprintf(session->current_session, sizeof(session->current_session), "%s", current);
+    }
     pthread_mutex_unlock(&session->lock);
     emit(session, REMOTE_EVENT_SESSIONS, text);
 }

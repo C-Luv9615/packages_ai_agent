@@ -479,17 +479,9 @@ void cmd_remote_use(int argc, char** argv)
     }
 
     if (argc < 2) {
-        if (current[0] != '\0') {
-            printf("Current session: gen%s\n", current);
-        } else {
-            printf("Current session: just opened — 'ruse' again to see it "
-                   "numbered.\n");
-        }
-        if (listing[0] != '\0') {
-            printf("%s", listing);
-        }
-        printf("Refreshing; switch with 'ruse <number>'.\n");
-        /* The fresh listing prints as it arrives (REMOTE_EVENT_SESSIONS). */
+        /* One request, one print: the reply block arrives as
+         * REMOTE_EVENT_SESSIONS and is echoed there. Printing the cached
+         * copy too produced every listing twice. */
         if (remote_ctrl_channel_request_sessions() != OK) {
             printf("Could not request the listing: the link is offline.\n");
         }

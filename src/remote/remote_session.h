@@ -215,9 +215,10 @@ bool remote_session_request_sessions(struct remote_session_s* session);
 bool remote_session_new_session(struct remote_session_s* session);
 bool remote_session_switch_session(struct remote_session_s* session,
     const char* target);
-/* Stores one formatted listing and emits REMOTE_EVENT_SESSIONS. */
+/* Stores one formatted listing (and the gateway's current generation, when
+ * named) and emits REMOTE_EVENT_SESSIONS. */
 void remote_session_sessions(struct remote_session_s* session,
-    const char* text);
+    const char* text, const char* current);
 
 /* Submits one chat turn to the remote agent. Safe for tools: rejects locally
  * while a turn or a permission request is active, so it fails fast instead of

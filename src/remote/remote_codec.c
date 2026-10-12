@@ -433,6 +433,7 @@ static void receive_session_list(struct remote_session_s* session,
     const cJSON* sessions = field(root, "sessions");
     const cJSON* entry;
     char text[REMOTE_SESSION_LIST_TEXT_MAX];
+    char current_id[12];
     size_t used = 0;
     int written;
 
@@ -441,7 +442,18 @@ static void receive_session_list(struct remote_session_s* session,
     }
 
     /* Formatted here, stored whole: this is a console listing, not authority
-     * state, so a view struct would be three copies of the same bytes. */
+     * state, so a view struct would be three copies of the same bytes. The
+     * block carries its own header/footer so both print sites (the cached
+     * echo and the arrival event) read like `rstat`. */
+    written = snprintf(text + used, sizeof(text) - used,
+        "=== Remote sessions ===\n");
+    if (written < 0 || (size_t)written >= sizeof(text) - used) {
+        used = sizeof(text) - 1;
+    } else {
+        used += (size_t)written;
+    }
+
+    current_id[0] = '\0';
     cJSON_ArrayForEach(entry, sessions)
     {
         const cJSON* id = cJSON_IsObject(entry) ? field(entry, "id") : NULL;
@@ -451,7 +463,10 @@ static void receive_session_list(struct remote_session_s* session,
         if (!valid_string(id) || (preview != NULL && !cJSON_IsString(preview))) {
             continue;
         }
-        written = snprintf(text + used, sizeof(text) - used, "%s%s  %s\n",
+        if (cJSON_IsTrue(current) && id->valuestring[0] != '\0') {
+            snprintf(current_id, sizeof(current_id), "%s", id->valuestring);
+        }
+        written = snprintf(text + used, sizeof(text) - used, "  %s %s  %s\n",
             cJSON_IsTrue(current) ? "*" : " ", id->valuestring,
             (preview != NULL && preview->valuestring[0] != '\0') ? preview->valuestring : "(empty)");
         if (written < 0 || (size_t)written >= sizeof(text) - used) {
@@ -462,7 +477,19 @@ static void receive_session_list(struct remote_session_s* session,
         used += (size_t)written;
     }
 
-    remote_session_sessions(session, text);
+    if (used < sizeof(text) - 1) {
+        written = snprintf(text + used, sizeof(text) - used,
+            "  Switch: 'ruse <n>'   New: 'rnew'\n====================\n");
+        if (written < 0 || (size_t)written >= sizeof(text) - used) {
+            used = sizeof(text) - 1;
+        } else {
+            used += (size_t)written;
+        }
+    }
+
+    /* The gateway is the authority on which generation is live; rstat reads
+     * this copy, so it is refreshed from every listing or the two disagree. */
+    remote_session_sessions(session, text, current_id[0] != '\0' ? current_id : NULL);
 }
 
 static void receive_hello_ack(struct remote_session_s* session,
