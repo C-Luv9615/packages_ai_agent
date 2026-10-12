@@ -527,6 +527,10 @@ int lvgl_ui_channel_init(void)
      * idle-yield timer runs in the LVGL thread and only fires when the chat
      * screen owns the foreground. */
     (void)pet_status_view_init();
+    /* Surface the pet as the boot/home screen immediately.  On CP this is
+     * idempotent with cp_ui_main's explicit show(); on qemu (no cp_ui_main,
+     * no AP→CP RPMsg) it is the only thing that brings the pet up at boot. */
+    pet_status_view_show();
     s_pet_idle_timer = lv_timer_create(pet_idle_timer_cb, 1000, NULL);
     if (s_pet_idle_timer)
       {
