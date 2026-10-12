@@ -431,6 +431,12 @@ static void* outbound_dispatch_task(void* arg)
                     syslog(LOG_ERR, "[%s] voice_channel_speak failed: %d\n", TAG, vret);
                     s_voice_cooldown = true;
                     s_voice_cooldown_until = time(NULL) + 5;
+#if defined(CONFIG_AI_AGENT_LVGL_UI) || defined(CONFIG_AI_AGENT_UI_RPMSG)
+                    /* TTS failed — drive the pet to ERROR (red+shake) so the
+                     * user sees the failure on screen, not just a silent skip.
+                     * 5 = PET_STATE_ERROR (pet_status_view.h). */
+                    (void)lvgl_ui_channel_set_pet_state(5);
+#endif
                 }
             }
 #if defined(CONFIG_AI_AGENT_LVGL_UI) || defined(CONFIG_AI_AGENT_UI_RPMSG)

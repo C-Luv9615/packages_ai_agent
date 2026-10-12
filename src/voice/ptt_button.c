@@ -135,6 +135,7 @@ static void ptt_on_release(void)
 {
   char asr_text[CONFIG_AI_AGENT_PTT_ASR_CAP];
   int ret;
+  bool asr_failed = false;
 
   pthread_mutex_lock(&g_ptt_lock);
   if (!g_ptt_recording)
@@ -159,6 +160,7 @@ static void ptt_on_release(void)
     {
       syslog(LOG_ERR, "[%s] voice_channel_stop_with_text failed rc=%d\n",
              TAG, ret);
+      asr_failed = true;
       goto done;
     }
 
@@ -186,6 +188,11 @@ done:
 
 #if PTT_HAVE_UI
   (void)lvgl_ui_channel_set_ptt(LVGL_UI_PTT_IDLE);
+  /* On ASR failure, drive the pet to ERROR (5) AFTER the PTT-IDLE mirror so
+   * the RPMsg FIFO delivers ERROR last — the pet shows red+shake instead of
+   * silently going idle-green.  pet_status_view.h: 5=PET_STATE_ERROR. */
+  if (asr_failed)
+    (void)lvgl_ui_channel_set_pet_state(5);
 #endif
 }
 
