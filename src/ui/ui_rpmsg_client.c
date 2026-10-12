@@ -271,6 +271,37 @@ int lvgl_ui_channel_send_ex(const char *text, uint32_t bar_color)
   return ret;
 }
 
+/* User bubble: forward the recognized PTT utterance to CP as a right-aligned
+ * blue bubble.  No TTS — the user's own words are not spoken back. */
+int lvgl_ui_channel_send_user(const char *text)
+{
+  struct ui_rpmsg_msg m;
+  size_t tlen;
+  int ret;
+
+  if (text == NULL)
+    {
+      return -EINVAL;
+    }
+
+  memset(&m, 0, sizeof(m));
+  m.op = UI_RPMSG_SEND_USER;
+  tlen = strlen(text);
+  if (tlen > UI_RPMSG_MAX_TEXT)
+    {
+      tlen = UI_RPMSG_MAX_TEXT;
+    }
+  m.payload_len = (uint16_t)tlen;
+  memcpy(m.payload, text, tlen);
+
+  ret = ui_rpmsg_send(&m);
+  if (ret < 0)
+    {
+      syslog(LOG_WARNING, "[%s] send_user bubble to CP failed: %d\n", TAG, ret);
+    }
+  return ret;
+}
+
 /* Drive the CP PTT button state from the AP voice pipeline. */
 int lvgl_ui_channel_set_ptt(int state)
 {

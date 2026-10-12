@@ -80,6 +80,9 @@
 #if defined(CONFIG_AI_AGENT_LVGL_UI) || defined(CONFIG_AI_AGENT_UI_RPMSG)
 #include "ui/lvgl_ui_channel.h"
 #endif
+#ifdef CONFIG_AI_AGENT_PTT
+#include "voice/ptt_button.h"
+#endif
 #ifdef CONFIG_AI_AGENT_NOTIFY_SERVICE
 #include "infra/notify_service.h"
 #endif
@@ -660,6 +663,14 @@ int ai_agent_main(int argc, char* argv[])
 #if defined(CONFIG_AI_AGENT_LVGL_UI) || defined(CONFIG_AI_AGENT_UI_RPMSG)
         rc = lvgl_ui_channel_init();
         BOOT_LOG_RC(&t0, "P3", "lvgl_ui_channel_init", rc);
+#endif
+
+#ifdef CONFIG_AI_AGENT_PTT
+        /* Start the physical S1 hold-to-talk thread.  Needs voice + UI
+         * channel up first; the button device (/dev/btn0) is opened lazily
+         * inside the thread so a missing driver doesn't abort boot. */
+        rc = ptt_button_start();
+        BOOT_LOG_RC(&t0, "P3", "ptt_button_start", rc);
 #endif
 
 #ifdef CONFIG_AI_AGENT_NOTIFY_SERVICE

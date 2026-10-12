@@ -75,6 +75,10 @@ enum ui_rpmsg_op {
     UI_RPMSG_SET_PTT = 8, /* drive PTT button state from AP:
                            * payload[0] = enum lvgl_ui_ptt_state
                            * (0=idle,1=recording,2=processing). */
+    UI_RPMSG_SEND_USER = 9, /* show a USER (right-aligned) bubble with the
+                             * recognized utterance: payload = UTF-8 text
+                             * (len, not NUL-terminated), like SEND but
+                             * is_user=true and no TTS. */
 };
 
 /** Fixed wire format (packed, little-endian on both M-class cores). */
@@ -90,6 +94,8 @@ struct ui_rpmsg_msg {
      *             payload_len covers the u32 + text.
      *   SET_PTT : payload[0] = PTT state (0 idle,1 recording,2 processing);
      *             payload_len = 1.
+     *   SEND_USER : payload = UTF-8 user utterance text (len, not NUL-term);
+     *               like SEND but rendered as a user (right) bubble, no TTS.
      *   INIT/START/STOP/SHOW: payload_len = 0.
      */
     uint8_t  payload[UI_RPMSG_MAX_PAYLOAD];

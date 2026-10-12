@@ -120,6 +120,13 @@ if(CONFIG_EXAMPLES_AI_AGENT_VELA)
     list(APPEND AGENT_SRCS src/ui/ui_rpmsg_client.c)
   endif()
 
+  # Physical S1 hold-to-talk button (M5 PTT).  AP-only: the buttons + voice
+  # pipeline + UI shim all live on the AP core, so no reverse RPMsg.  Calls
+  # voice_channel_start/stop_with_text + lvgl_ui_channel_set_ptt/send_user.
+  if(CONFIG_AI_AGENT_PTT)
+    list(APPEND AGENT_SRCS src/voice/ptt_button.c)
+  endif()
+
   if(CONFIG_AI_AGENT_NOTIFY_SERVICE)
     list(APPEND AGENT_SRCS src/infra/notify_service.c)
   endif()

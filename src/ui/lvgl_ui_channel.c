@@ -793,6 +793,39 @@ int lvgl_ui_channel_send_ex(const char* text, uint32_t bar_color)
     return 0;
 }
 
+/* User bubble: echo the recognized PTT utterance as a right-aligned blue
+ * bubble.  No TTS (we don't speak the user's own words back).  bar_color is
+ * unused for user bubbles (they have no card color bar). */
+int lvgl_ui_channel_send_user(const char* text)
+{
+    async_msg_t* payload;
+
+    if (!text || text[0] == '\0') {
+        syslog(LOG_ERR, "[%s] send_user: invalid text\n", TAG);
+        return -EINVAL;
+    }
+    if (!s_state.initialized || !s_state.running) {
+        syslog(LOG_ERR, "[%s] send_user: channel not ready\n", TAG);
+        return -EINVAL;
+    }
+
+    if (!s_state.screen_visible) {
+        lvgl_ui_channel_show();
+    }
+
+    payload = malloc(sizeof(async_msg_t));
+    if (!payload) {
+        syslog(LOG_ERR, "[%s] send_user: payload alloc failed\n", TAG);
+        return -ENOMEM;
+    }
+    chat_view_copy_text(payload->text, text, LVGL_UI_MSG_MAX_LEN);
+    payload->is_user = true;
+    payload->bar_color = 0;
+
+    lv_async_call(chat_view_add_message_async_cb, payload);
+    return 0;
+}
+
 /* ── External PTT state (AP→CP RPMsg SET_PTT) ─────────────────── */
 
 /* Heap-allocated state for async set_ptt (single int fits in a void* but

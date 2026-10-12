@@ -116,6 +116,46 @@ config AI_AGENT_UI_RPMSG
 		AI_AGENT_LVGL_UI).  TTS still runs locally on AP via
 		voice_channel_speak(); only the bubble render crosses the link.
 
+config AI_AGENT_PTT
+	bool "Physical Push-to-Talk button (hold-to-talk)"
+	default n
+	depends on INPUT_BUTTONS
+	depends on AI_AGENT_LVGL_UI || AI_AGENT_UI_RPMSG
+	---help---
+		Compile the AP-side physical PTT button thread (ptt_button.c).
+		Opens /dev/btn0 and watches the configured button (S1 by default)
+		for press/release edges: press → voice_channel_start() +
+		set_ptt(RECORDING); release → set_ptt(PROCESSING) +
+		voice_channel_stop_with_text() + send_user() echo +
+		voice_channel_dispatch() → agent → LLM → reply + set_ptt(IDLE).
+		Hold-to-talk semantics (UI方案.md §2.5).  No reverse RPMsg —
+		the buttons, voice pipeline, and UI shim are all on the AP core.
+
+config AI_AGENT_PTT_BUTTON_IDX
+	int "PTT button index (0=S1/KEY1, 1=S2/KEY2, 2=S3/KEY3)"
+	default 0
+	depends on AI_AGENT_PTT
+
+config AI_AGENT_PTT_DEVPATH
+	string "PTT button device path"
+	default "/dev/btn0"
+	depends on AI_AGENT_PTT
+
+config AI_AGENT_PTT_STACKSIZE
+	int "PTT button thread stack size"
+	default 4096
+	depends on AI_AGENT_PTT
+
+config AI_AGENT_PTT_PRIORITY
+	int "PTT button thread priority"
+	default 100
+	depends on AI_AGENT_PTT
+
+config AI_AGENT_PTT_ASR_CAP
+	int "ASR text buffer capacity (bytes)"
+	default 512
+	depends on AI_AGENT_PTT
+
 config AI_AGENT_FEISHU
 	bool "Enable Feishu bot channel"
 	default y

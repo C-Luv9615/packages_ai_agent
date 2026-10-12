@@ -155,6 +155,21 @@ static int ui_rpmsg_server_rx(struct rpmsg_endpoint *ept, void *data,
         }
         break;
 
+      case UI_RPMSG_SEND_USER:
+        {
+          /* Echo the recognized user utterance as a right-aligned bubble. */
+          char text[UI_RPMSG_MAX_TEXT + 1];
+          size_t tl = m->payload_len;
+          if (tl > UI_RPMSG_MAX_TEXT)
+            {
+              tl = UI_RPMSG_MAX_TEXT;
+            }
+          memcpy(text, m->payload, tl);
+          text[tl] = '\0';
+          (void)lvgl_ui_channel_send_user(text);
+        }
+        break;
+
       case UI_RPMSG_TOAST:
         {
           if (m->payload_len < 2 * sizeof(uint32_t))

@@ -71,6 +71,16 @@ int lvgl_ui_channel_send(const char* text);
  */
 int lvgl_ui_channel_send_ex(const char* text, uint32_t bar_color);
 
+/**
+ * 显示用户消息气泡（右对齐蓝色气泡，无色条卡片）。
+ * 用于回显 PTT 识别到的用户语音文本。不触发 TTS（用户自己的话不播报）。
+ * 首次调用时自动显示聊天界面。线程安全：通过 lv_async_call 调度到 LVGL 线程。
+ *
+ * @param text  UTF-8 文本，用户语音识别内容
+ * @return 0 成功，负值表示错误
+ */
+int lvgl_ui_channel_send_user(const char* text);
+
 /* PTT 按钮状态机，可由外部（AP 经 RPMsg）驱动，反映语音管线阶段。 */
 enum lvgl_ui_ptt_state {
     LVGL_UI_PTT_IDLE       = 0,  /* 空闲：恢复默认按钮样式，隐藏指示器 */
