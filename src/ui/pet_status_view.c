@@ -89,44 +89,52 @@ static struct pet_state_s s_pet;
 
 /* ---------- animation exec callbacks (LVGL v9: (obj, value)) ---------- */
 
+/* LVGL v9 exec_cb signature is lv_anim_exec_xcb_t = void(*)(void*, lv_anim_value_t),
+ * i.e. the first arg is the animated var (void*), NOT lv_obj_t* nor lv_anim_t*.
+ * We cast to lv_obj_t* inside for the lv_obj and lv_arc calls. */
 /* Spinner: a 90° segment rotating (THINKING / LISTENING). value = start angle. */
-static void spin_cb(lv_obj_t *obj, int32_t v)
+static void spin_cb(void *obj, int32_t v)
 {
-  lv_arc_set_angles((lv_obj_t *)obj, v, v + 90);
+  lv_obj_t *o = (lv_obj_t *)obj;
+  lv_arc_set_angles(o, v, v + 90);
 }
 
 /* Growing fill: indicator grows 0→360 (EXECUTING). value = end angle. */
-static void fill_cb(lv_obj_t *obj, int32_t v)
+static void fill_cb(void *obj, int32_t v)
 {
-  lv_arc_set_angles((lv_obj_t *)obj, 0, v);
+  lv_obj_t *o = (lv_obj_t *)obj;
+  lv_arc_set_angles(o, 0, v);
 }
 
 /* Breathing: face opacity pulses (IDLE). value 0..100. */
-static void breathe_cb(lv_obj_t *obj, int32_t v)
+static void breathe_cb(void *obj, int32_t v)
 {
+  lv_obj_t *o = (lv_obj_t *)obj;
   /* 100% → 255, 0% → 190 (gentle). */
-  lv_obj_set_style_opa(obj, LV_OPA_COVER - (v * (LV_OPA_COVER - 190)) / 100, 0);
+  lv_obj_set_style_opa(o, LV_OPA_COVER - (v * (LV_OPA_COVER - 190)) / 100, 0);
 }
 
 /* Blink: both eyes opacity (WAITING). value 0..100, triangle-ish via sin-free. */
-static void blink_cb(lv_obj_t *obj, int32_t v)
+static void blink_cb(void *obj, int32_t v)
 {
+  lv_obj_t *o = (lv_obj_t *)obj;
   /* open(0) → closed(50) → open(100): opaque at ends, transparent at mid. */
-  lv_opa_t o = (v < 50) ? LV_OPA_COVER - (v * 2)
+  lv_opa_t op = (v < 50) ? LV_OPA_COVER - (v * 2)
                        : LV_OPA_TRANSP + ((v - 50) * 2 * LV_OPA_COVER / 100);
-  if (o > LV_OPA_COVER) o = LV_OPA_COVER;
-  lv_obj_set_style_opa(obj, o, 0);
+  if (op > LV_OPA_COVER) op = LV_OPA_COVER;
+  lv_obj_set_style_opa(o, op, 0);
 }
 
 /* Shake: face x jitter (ERROR). value 0..100 maps to a few oscillations. */
-static void shake_cb(lv_obj_t *obj, int32_t v)
+static void shake_cb(void *obj, int32_t v)
 {
+  lv_obj_t *o = (lv_obj_t *)obj;
   /* 0..100 → four half-swings of ±5px. Simple triangle per 25-step. */
   int seg = v / 25;
   int phase = v % 25;
   int amp = (phase < 13) ? (phase * 5 / 12) : ((25 - phase) * 5 / 12);
   int sign = (seg % 2 == 0) ? 1 : -1;
-  lv_obj_set_style_translate_x(obj, sign * amp, 0);
+  lv_obj_set_style_translate_x(o, sign * amp, 0);
 }
 
 static void stop_anim(void)
